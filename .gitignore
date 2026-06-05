@@ -1,0 +1,9 @@
+# Nix build artifacts
+result
+result-*
+
+# direnv
+.direnv/
+
+# pic32 compiler
+pic32-64-2017_09_15.tgz
