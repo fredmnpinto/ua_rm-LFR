@@ -5,5 +5,8 @@ result-*
 # direnv
 .direnv/
 
+# Example code
+rm_deti_rob/
+
 # pic32 compiler
 pic32-64-2017_09_15.tgz
