@@ -18,12 +18,11 @@
  * ======================================================================== */
 
 #define MAX_STACK_DEPTH 32
-#define BREAK_PATTERN_TICK_THRESHOLD 10
 #define TARGET_TICK_THRESHOLD 20
-#define TARGET_DIST_THRESHOLD 0.16
-#define BASE_SPEED 15
-#define TURN_SPEED 5
-#define RECOVERY_SPEED 15
+#define TARGET_DIST_THRESHOLD 30
+#define BASE_SPEED 40
+#define TURN_SPEED 30
+#define RECOVERY_SPEED 40
 #define LOST_TICKS 25
 #define ORIGIN_TOLERANCE 0.05
 
@@ -80,7 +79,6 @@ static double g_targetH = 0.0;
 /* Tick counters and flags */
 static int g_lostTickCount = 0;
 static int g_targetTickCount = 0;
-static int g_breakPatternTickCount = 0;
 
 /* Target verification start pose */
 static double g_verifyStartX = 0.0;
@@ -252,9 +250,9 @@ static void lineFollowTick(unsigned int ground, bool *pIntersection,
   *pIntersection = false;
   *pLost = false;
 
-  printf("DEBUG LINE SENSOR ---- ");
-  printInt(ground, 2 | 5 << 16); // System call
-  printf("\n");
+  // printf("DEBUG LINE SENSOR ---- ");
+  // printInt(ground, 2 | 5 << 16); // System call
+  // printf("\n");
 
   if (ground == SENSOR_NONE) {
     /* Lost line — signal to caller, do not set motors here */
@@ -402,7 +400,6 @@ static void restartMission(void) {
   g_stack_top = -1;
   g_lostTickCount = 0;
   g_targetTickCount = 0;
-  g_breakPatternTickCount = 0;
   g_rotActive = false;
   g_missionTick = 0;
   logTransition(STATE_FOLLOW_LINE, NULL);
@@ -524,7 +521,6 @@ int main(void) {
           /* Could be intersection or target — verify */
           getRobotPos(&g_verifyStartX, &g_verifyStartY, &h);
           g_targetTickCount = 0;
-          g_breakPatternTickCount = 0;
           formatGroundHex(ground, logDetail);
           logTransition(STATE_VERIFY_TARGET, logDetail);
           g_state = STATE_VERIFY_TARGET;
@@ -536,21 +532,16 @@ int main(void) {
     /* STATE_VERIFY_TARGET — distinguish target vs crossing */
     /* -------------------------------------------------- */
     case STATE_VERIFY_TARGET:
-      /* Pattern broke — this was just an intersection */
-      printf("DEBUG --- Verifying target... ground = ");
-      printInt(ground, 2 | 5 << 16); // System call
-      printf("\n");
 
       if (ground == SENSOR_ALL) {
         g_targetTickCount++;
         getRobotPos(&x, &y, &h);
-        // dist = hypot(x - g_verifyStartX, y - g_verifyStartY);
+        dist = sqrt(x - g_verifyStartX * y - g_verifyStartY);
 
-        printf("DEBUG --- targetTickCount = %d\n", g_targetTickCount);
+        printf("DEBUG --- targetTickCount = %d - dist = %f\n",
+               g_targetTickCount, dist);
 
-        if (g_targetTickCount >= TARGET_TICK_THRESHOLD) /* &&
-             dist >= TARGET_DIST_THRESHOLD)*/
-        {
+        if (dist >= TARGET_DIST_THRESHOLD) {
           /* Confirmed target */
           logTransition(STATE_AT_TARGET, NULL);
           g_state = STATE_AT_TARGET;
@@ -558,10 +549,10 @@ int main(void) {
           /* Keep driving straight over the wide area */
           setVel2(BASE_SPEED, BASE_SPEED);
         }
-      } else if (++g_breakPatternTickCount >= BREAK_PATTERN_TICK_THRESHOLD) {
+      } else {
 
-        printf("DEBUG --- Pattern broke for over %d ticks\n",
-               BREAK_PATTERN_TICK_THRESHOLD);
+        /* Pattern broke — this was just an intersection */
+        printf("DEBUG --- Target pattern broke\n");
 
         g_targetTickCount = 0;
         logTransition(STATE_DETECT_INTERSECTION, NULL);
