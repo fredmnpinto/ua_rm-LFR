@@ -536,7 +536,7 @@ int main(void) {
       if (ground == SENSOR_ALL) {
         g_targetTickCount++;
         getRobotPos(&x, &y, &h);
-        dist = sqrt((x - g_verifyStartX) * (y - g_verifyStartY));
+        dist = hypot(x - g_verifyStartX, y - g_verifyStartY);
 
         // printf("DEBUG --- targetTickCount = %d - dist = %f\n",
         //        g_targetTickCount, dist);
@@ -568,7 +568,7 @@ int main(void) {
       getRobotPos(&x, &y, &h);
 
       double distIntoIntersection =
-          sqrt((x - g_verifyStartX) * (y - g_verifyStartY));
+          hypot(x - g_verifyStartX, y - g_verifyStartY);
       // printf("DEBUG --- x, y = (%d, %d)\n", x, y);
       // printf("DEBUG --- g_verifyStart = (%d, %d)\n", g_verifyStartX,
       //        g_verifyStartY);
