@@ -1,0 +1,84 @@
+# .clangd — clangd language server configuration for PIC32 embedded C project
+# TP2: Path Finder Robot (PIC32MX795F512H)
+#
+# Since `pcompile` is a wrapper script, clangd cannot parse it automatically.
+# This file provides fallback compiler flags so clangd can provide code
+# completion, go-to-definition, and diagnostics for the project source.
+#
+# Place this file in the project root: /home/fred/Projects/MSc/RM/NunoLau/TP2/.clangd
+#
+# Caveats:
+#   - clangd uses the clang frontend, not GCC 3.4.4 / pic32-gcc.
+#   - Some PIC32-specific intrinsics, inline assembly, and register definitions
+#     in <detpic32.h> may still show as errors. This is expected.
+#   - The `-mprocessor=32MX795F512H` flag is removed because clang does not
+#     support Microchip's proprietary processor selector.
+
+CompileFlags:
+  # Compiler flags to ADD for clangd's fallback compilation
+  Add:
+    # C standard: GNU11 for embedded compatibility
+    - -std=gnu11
+
+    # Target architecture: MIPS little-endian bare-metal ELF (PIC32)
+    - -target=mipsel-none-elf
+
+    # Bare-metal / freestanding environment (no hosted libc assumptions)
+    - -ffreestanding
+
+    # Do not use ABI-compliant function calls (embedded MIPS convention)
+    - -mno-abicalls
+
+    # Disable built-in function assumptions that may conflict with embedded libs
+    - -fno-builtin
+
+    # Include paths: project source
+    - -Isrc
+
+    # Include paths: PIC32 toolchain (local /opt installation)
+    - -I/opt/pic32mx/include
+
+    # Include paths: PIC32 toolchain (Nix store fallback — matches flake.nix)
+    # If the Nix store path differs on your machine, update or remove this line.
+    - -I/nix/store/ry284qsvyq3nf0aclbxq2y258fv1si1r-pic32-toolchain-2017.09.15/opt/pic32mx/include
+
+    # Include paths: GCC internal headers (for stddef.h, limits.h, etc.)
+    - -I/opt/pic32mx/lib/gcc/pic32mx/3.4.4/include
+
+    # Preprocessor defines: PIC32 platform identifiers
+    - -D__PIC32MX__
+    - -D__XC32
+
+    # Preprocessor define: default robot ID (matches rm-mr32.h fallback)
+    - -DROBOT=1
+
+    # Define _POSIX_C_SOURCE to help clangd parse standard headers more cleanly
+    - -D_POSIX_C_SOURCE=200809L
+
+  # Compiler flags to REMOVE (pic32-gcc specific, not understood by clang)
+  Remove:
+    # Microchip processor selector (proprietary, clang has no equivalent)
+    - -mprocessor=*
+
+    # Microchip-specific I/O optimization
+    - -mno-smart-io
+
+    # DWARF2 CFI assembler directive (clang uses DWARF3+ by default)
+    - -fno-dwarf2-cfi-asm
+
+    # Any other pic32-gcc-specific flags can be added here as needed
+    - -msoft-float
+    - -mhard-float
+
+---
+# Optional: diagnostics tuning
+# Reduce noise from PIC32-specific code that clang cannot parse.
+Diagnostics:
+  # Suppress "unknown attribute" warnings for PIC32-specific attributes
+  Suppress: []
+
+---
+# Optional: index tuning
+# Ensure clangd indexes the project headers for better go-to-definition.
+Index:
+  Background: Build
