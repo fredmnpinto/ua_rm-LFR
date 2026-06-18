@@ -19,7 +19,7 @@
 
 #define MAX_STACK_DEPTH 32
 #define TARGET_TICK_THRESHOLD 20
-#define TARGET_DIST_THRESHOLD 30
+#define TARGET_DIST_THRESHOLD 6
 #define BASE_SPEED 40
 #define TURN_SPEED 30
 #define RECOVERY_SPEED 40
@@ -536,10 +536,10 @@ int main(void) {
       if (ground == SENSOR_ALL) {
         g_targetTickCount++;
         getRobotPos(&x, &y, &h);
-        dist = sqrt(x - g_verifyStartX * y - g_verifyStartY);
+        dist = sqrt((x - g_verifyStartX) * (y - g_verifyStartY));
 
-        printf("DEBUG --- targetTickCount = %d - dist = %f\n",
-               g_targetTickCount, dist);
+        // printf("DEBUG --- targetTickCount = %d - dist = %f\n",
+        //        g_targetTickCount, dist);
 
         if (dist >= TARGET_DIST_THRESHOLD) {
           /* Confirmed target */
@@ -552,7 +552,7 @@ int main(void) {
       } else {
 
         /* Pattern broke — this was just an intersection */
-        printf("DEBUG --- Target pattern broke\n");
+        // printf("DEBUG --- Target pattern broke\n");
 
         g_targetTickCount = 0;
         logTransition(STATE_DETECT_INTERSECTION, NULL);
@@ -566,11 +566,22 @@ int main(void) {
     case STATE_DETECT_INTERSECTION:
       setVel2(0, 0);
       getRobotPos(&x, &y, &h);
+
+      double distIntoIntersection =
+          sqrt((x - g_verifyStartX) * (y - g_verifyStartY));
+      // printf("DEBUG --- x, y = (%d, %d)\n", x, y);
+      // printf("DEBUG --- g_verifyStart = (%d, %d)\n", g_verifyStartX,
+      //        g_verifyStartY);
+      //
+      // printf("DEBUG --- distIntoIntersection = %f\n", distIntoIntersection);
+
       if (!pushPose(x, y, h)) {
         /* Stack full — abort safely */
         setVel2(0, 0);
         logTransition(STATE_DONE, "STACK_OVERFLOW");
         g_state = STATE_DONE;
+      } else if (distIntoIntersection <= 10) {
+        setVel2(BASE_SPEED, BASE_SPEED);
       } else {
         logPush(g_stack_top + 1, x, y, h);
         startRotation(PI / 2.0); /* 90 deg left */
