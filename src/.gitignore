@@ -3,3 +3,7 @@
 *.map
 *.o
 *.elf
+
+# logs
+*.txt
+*.log
