@@ -510,7 +510,27 @@ static void stateReturnTurn_onTick(void) {
 static void stateReturnFollow_onTick(void) {
   double x, y, h;
   double dist;
+  bool lost;
 
+  /* Follow the line like normal, but check if we've reached the parent node */
+  centerRobotOnLine(g_ground, &lost);
+
+  if (lost) {
+    /* Lost line during return — try to recover */
+    g_lostTickCount++;
+    if (g_lostTickCount < LOST_TICKS) {
+      setVel2(-RECOVERY_SPEED, RECOVERY_SPEED);
+    } else {
+      setVel2(0, 0);
+      logLostTimeout();
+      changeState(&g_stateDone, "LOST_RETURN");
+    }
+    return;
+  }
+
+  g_lostTickCount = 0;
+
+  /* Check distance to parent node */
   getRobotPos(&x, &y, &h);
   dist = hypot(g_returnTargetX - x, g_returnTargetY - y);
 
@@ -526,9 +546,6 @@ static void stateReturnFollow_onTick(void) {
       /* Next parent */
       startReturnToParent();
     }
-  } else {
-    /* Drive straight toward target */
-    setVel2(BASE_SPEED, BASE_SPEED);
   }
 }
 
