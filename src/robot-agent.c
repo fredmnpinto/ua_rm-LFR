@@ -469,6 +469,11 @@ static void stateTurnLeft_onTick(void) {
   }
 }
 
+static void stateTurnLeft_onExit(void) {
+  g_rotActive = false;
+  setVel2(0, 0);
+}
+
 /* -------------------------------------------------- */
 /* STATE_AT_TARGET                                    */
 /* -------------------------------------------------- */
@@ -502,6 +507,11 @@ static void stateReturnTurn_onTick(void) {
   if (rotationDone()) {
     changeState(&g_stateReturnFollow, NULL);
   }
+}
+
+static void stateReturnTurn_onExit(void) {
+  g_rotActive = false;
+  setVel2(0, 0);
 }
 
 /* -------------------------------------------------- */
@@ -568,13 +578,13 @@ State g_stateIdle = {NULL, stateIdle_onTick, NULL, "IDLE"};
 State g_stateFollowLine = {NULL, stateFollowLine_onTick, NULL, "FOLLOW_LINE"};
 State g_statePrepareTurn = {statePrepareTurn_onEnter, statePrepareTurn_onTick, NULL,
                                    "PREPARE_TURN"};
-State g_stateTurnLeft = {stateTurnLeft_onEnter, stateTurnLeft_onTick, NULL,
-                         "TURN_LEFT"};
+State g_stateTurnLeft = {stateTurnLeft_onEnter, stateTurnLeft_onTick, stateTurnLeft_onExit,
+                          "TURN_LEFT"};
 State g_stateVerifyTarget = {stateVerifyTarget_onEnter,
                              stateVerifyTarget_onTick, NULL, "VERIFY_TARGET"};
 State g_stateAtTarget = {NULL, stateAtTarget_onTick, NULL, "AT_TARGET"};
 State g_stateReturnTurn = {stateReturnTurn_onEnter, stateReturnTurn_onTick,
-                           NULL, "RETURN_TURN"};
+                           stateReturnTurn_onExit, "RETURN_TURN"};
 State g_stateReturnFollow = {NULL, stateReturnFollow_onTick, NULL,
                              "RETURN_FOLLOW"};
 State g_stateDone = {NULL, stateDone_onTick, NULL, "DONE"};
