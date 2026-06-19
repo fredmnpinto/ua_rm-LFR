@@ -18,7 +18,6 @@
  * ======================================================================== */
 
 #define MAX_STACK_DEPTH 32
-#define TARGET_TICK_THRESHOLD 20
 #define TARGET_DIST_THRESHOLD 6
 #define BASE_SPEED 40
 #define TURN_SPEED 30
@@ -41,18 +40,6 @@
  *   STATE MACHINE
  * ======================================================================== */
 
-typedef enum {
-  STATE_IDLE,
-  STATE_FOLLOW_LINE,
-  STATE_PREPARE_TURN,
-  STATE_TURN_LEFT,
-  STATE_VERIFY_TARGET,
-  STATE_AT_TARGET,
-  STATE_RETURN_TURN,
-  STATE_RETURN_FOLLOW,
-  STATE_DONE
-} RobotState;
-
 typedef struct State {
   void (*onEnter)(void);
   void (*onTick)(void);
@@ -74,15 +61,41 @@ typedef struct {
  *   FORWARD DECLARATIONS OF STATE INSTANCES
  * ======================================================================== */
 
-extern State g_stateIdle;
-extern State g_stateFollowLine;
-extern State g_statePrepareTurn;
-extern State g_stateTurnLeft;
-extern State g_stateVerifyTarget;
-extern State g_stateAtTarget;
-extern State g_stateReturnTurn;
-extern State g_stateReturnFollow;
-extern State g_stateDone;
+/* Forward declarations of state handler functions */
+static void stateIdle_onTick(void);
+static void stateFollowLine_onTick(void);
+static void statePrepareTurn_onEnter(void);
+static void statePrepareTurn_onTick(void);
+static void stateTurnLeft_onEnter(void);
+static void stateTurnLeft_onTick(void);
+static void stateTurnLeft_onExit(void);
+static void stateVerifyTarget_onEnter(void);
+static void stateVerifyTarget_onTick(void);
+static void stateAtTarget_onTick(void);
+static void stateReturnTurn_onEnter(void);
+static void stateReturnTurn_onTick(void);
+static void stateReturnTurn_onExit(void);
+static void stateReturnFollow_onTick(void);
+static void stateDone_onTick(void);
+
+/* ========================================================================
+ *   STATE INSTANCE DEFINITIONS
+ * ======================================================================== */
+
+State g_stateIdle = {NULL, stateIdle_onTick, NULL, "IDLE"};
+State g_stateFollowLine = {NULL, stateFollowLine_onTick, NULL, "FOLLOW_LINE"};
+State g_statePrepareTurn = {statePrepareTurn_onEnter, statePrepareTurn_onTick, NULL,
+                                   "PREPARE_TURN"};
+State g_stateTurnLeft = {stateTurnLeft_onEnter, stateTurnLeft_onTick, stateTurnLeft_onExit,
+                          "TURN_LEFT"};
+State g_stateVerifyTarget = {stateVerifyTarget_onEnter,
+                             stateVerifyTarget_onTick, NULL, "VERIFY_TARGET"};
+State g_stateAtTarget = {NULL, stateAtTarget_onTick, NULL, "AT_TARGET"};
+State g_stateReturnTurn = {stateReturnTurn_onEnter, stateReturnTurn_onTick,
+                           stateReturnTurn_onExit, "RETURN_TURN"};
+State g_stateReturnFollow = {NULL, stateReturnFollow_onTick, NULL,
+                             "RETURN_FOLLOW"};
+State g_stateDone = {NULL, stateDone_onTick, NULL, "DONE"};
 
 /* ========================================================================
  *   GLOBAL VARIABLES (all statically allocated)
@@ -581,25 +594,6 @@ static void stateDone_onTick(void) {
     pushPose(0.0, 0.0, 0.0); /* Cannot overflow — stack just reset */
   }
 }
-
-/* ========================================================================
- *   STATE INSTANCE DEFINITIONS
- * ======================================================================== */
-
-State g_stateIdle = {NULL, stateIdle_onTick, NULL, "IDLE"};
-State g_stateFollowLine = {NULL, stateFollowLine_onTick, NULL, "FOLLOW_LINE"};
-State g_statePrepareTurn = {statePrepareTurn_onEnter, statePrepareTurn_onTick, NULL,
-                                   "PREPARE_TURN"};
-State g_stateTurnLeft = {stateTurnLeft_onEnter, stateTurnLeft_onTick, stateTurnLeft_onExit,
-                          "TURN_LEFT"};
-State g_stateVerifyTarget = {stateVerifyTarget_onEnter,
-                             stateVerifyTarget_onTick, NULL, "VERIFY_TARGET"};
-State g_stateAtTarget = {NULL, stateAtTarget_onTick, NULL, "AT_TARGET"};
-State g_stateReturnTurn = {stateReturnTurn_onEnter, stateReturnTurn_onTick,
-                           stateReturnTurn_onExit, "RETURN_TURN"};
-State g_stateReturnFollow = {NULL, stateReturnFollow_onTick, NULL,
-                             "RETURN_FOLLOW"};
-State g_stateDone = {NULL, stateDone_onTick, NULL, "DONE"};
 
 /* ========================================================================
  *   LED INDICATORS
