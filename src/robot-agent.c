@@ -259,10 +259,6 @@ static void lineFollowTick(unsigned int ground, bool *pIntersection,
   *pIntersection = false;
   *pLost = false;
 
-  // printf("DEBUG LINE SENSOR ---- ");
-  // printInt(ground, 2 | 5 << 16); // System call
-  // printf("\n");
-
   if (ground == SENSOR_NONE) {
     /* Lost line — signal to caller, do not set motors here */
     *pLost = true;
