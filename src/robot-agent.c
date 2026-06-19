@@ -25,6 +25,7 @@
 #define RECOVERY_SPEED 40
 #define LOST_TICKS 25
 #define ORIGIN_TOLERANCE 0.05
+#define INTERSECTION_CENTER_DIST 10  /* Distance to drive into intersection before turning */
 
 #define KP_ROT 40.0
 #define KI_ROT 5.0
@@ -448,7 +449,7 @@ static void statePrepareTurn_onTick(void) {
 
   distIntoIntersection = hypot(x - g_verifyStartX, y - g_verifyStartY);
 
-  if (distIntoIntersection <= 10) {
+  if (distIntoIntersection <= INTERSECTION_CENTER_DIST) {
     setVel2(BASE_SPEED, BASE_SPEED);
   } else {
     changeState(&g_stateTurnLeft, NULL);
