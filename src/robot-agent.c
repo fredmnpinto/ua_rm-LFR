@@ -52,6 +52,13 @@ typedef enum {
   STATE_DONE
 } RobotState;
 
+typedef struct State {
+    void (*onEnter)(void);
+    void (*onTick)(void);
+    void (*onExit)(void);
+    const char* name;
+} State;
+
 /* ========================================================================
  *   DATA STRUCTURES
  * ======================================================================== */
@@ -63,13 +70,30 @@ typedef struct {
 } StackEntry;
 
 /* ========================================================================
+ *   FORWARD DECLARATIONS OF STATE INSTANCES
+ * ======================================================================== */
+
+extern State g_stateIdle;
+extern State g_stateFollowLine;
+extern State g_stateDetectIntersection;
+extern State g_stateTurnLeft;
+extern State g_stateVerifyTarget;
+extern State g_stateAtTarget;
+extern State g_stateReturnTurn;
+extern State g_stateReturnFollow;
+extern State g_stateDone;
+
+/* ========================================================================
  *   GLOBAL VARIABLES (all statically allocated)
  * ======================================================================== */
 
 static StackEntry g_stack[MAX_STACK_DEPTH];
 static int g_stack_top = -1;
 
-static RobotState g_state = STATE_IDLE;
+static State* g_currentState = &g_stateIdle;
+
+static unsigned int g_ground = 0;
+static char g_logDetail[32];
 
 /* Target pose */
 static double g_targetX = 0.0;
@@ -93,43 +117,26 @@ static bool g_rotActive = false;
 static double g_returnTargetX = 0.0;
 static double g_returnTargetY = 0.0;
 
+/* Mission tick counter */
+static unsigned int g_missionTick = 0;
+static bool g_logThisTick = false;
+
+/* ========================================================================
+ *   FORWARD DECLARATIONS OF HELPER FUNCTIONS
+ * ======================================================================== */
+
+static void restartMission(void);
+static void startReturnToParent(void);
+
 /* ========================================================================
  *   LOGGING SUBSYSTEM
  * ======================================================================== */
-
-static unsigned int g_missionTick = 0;
-static bool g_logThisTick = false;
 
 #define LOG_TICK()                                                             \
   do {                                                                         \
     g_missionTick++;                                                           \
     g_logThisTick = false;                                                     \
   } while (0)
-
-static const char *stateName(RobotState s) {
-  switch (s) {
-  case STATE_IDLE:
-    return "IDLE";
-  case STATE_FOLLOW_LINE:
-    return "FOLLOW_LINE";
-  case STATE_DETECT_INTERSECTION:
-    return "DETECT_INTERSECTION";
-  case STATE_TURN_LEFT:
-    return "TURN_LEFT";
-  case STATE_VERIFY_TARGET:
-    return "VERIFY_TARGET";
-  case STATE_AT_TARGET:
-    return "AT_TARGET";
-  case STATE_RETURN_TURN:
-    return "RETURN_TURN";
-  case STATE_RETURN_FOLLOW:
-    return "RETURN_FOLLOW";
-  case STATE_DONE:
-    return "DONE";
-  default:
-    return "UNKNOWN";
-  }
-}
 
 static void formatGroundHex(unsigned int ground, char *out) {
   const char *hex = "0123456789ABCDEF";
@@ -147,11 +154,13 @@ static void formatGroundHex(unsigned int ground, char *out) {
   out[11] = '\0';
 }
 
-static void logTransition(RobotState to, const char *detail) {
+static void logTransition(State* to, const char *detail) {
   if (g_logThisTick)
     return;
-  printf("[T %u] %s -> %s%s%s\n", g_missionTick, stateName(g_state),
-         stateName(to), detail ? " " : "", detail ? detail : "");
+  const char* fromName = g_currentState ? g_currentState->name : "NULL";
+  const char* toName = to ? to->name : "NULL";
+  printf("[T %u] %s -> %s%s%s\n", g_missionTick, fromName,
+         toName, detail ? " " : "", detail ? detail : "");
   g_logThisTick = true;
 }
 
@@ -199,7 +208,7 @@ static void logLostTimeout(void) {
 }
 
 static void logMissionDone(double tx, double ty, double th, int depth,
-                           int ticks) {
+                            int ticks) {
   if (g_logThisTick)
     return;
   printf("[T %u] DONE target=(%.2f,%.2f,%.2f) depth=%d ticks=%d\n",
@@ -246,7 +255,7 @@ static bool isStackEmpty(void) { return (g_stack_top < 0); }
  * \param pLost output: set to true if line is lost
  */
 static void lineFollowTick(unsigned int ground, bool *pIntersection,
-                           bool *pLost) {
+                            bool *pLost) {
   *pIntersection = false;
   *pLost = false;
 
@@ -356,6 +365,249 @@ static bool rotationDone(void) {
 }
 
 /* ========================================================================
+ *   changeState() HELPER
+ * ======================================================================== */
+
+static void changeState(State* newState, const char* detail) {
+    logTransition(newState, detail);
+    if (g_currentState && g_currentState->onExit) {
+        g_currentState->onExit();
+    }
+    g_currentState = newState;
+    if (g_currentState && g_currentState->onEnter) {
+        g_currentState->onEnter();
+    }
+}
+
+/* ========================================================================
+ *   STATE HANDLER FUNCTIONS
+ * ======================================================================== */
+
+/* -------------------------------------------------- */
+/* STATE_IDLE                                         */
+/* -------------------------------------------------- */
+static void stateIdle_onTick(void) {
+    setVel2(0, 0);
+    if (startButton()) {
+        restartMission();
+        if (!pushPose(0.0, 0.0, 0.0)) {
+            setVel2(0, 0);
+            changeState(&g_stateDone, "STACK_OVERFLOW");
+        } else {
+            logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
+        }
+    }
+}
+
+/* -------------------------------------------------- */
+/* STATE_FOLLOW_LINE                                  */
+/* -------------------------------------------------- */
+static void stateFollowLine_onTick(void) {
+    bool intersection;
+    bool lost;
+    lineFollowTick(g_ground, &intersection, &lost);
+
+    if (lost) {
+        g_lostTickCount++;
+        if (g_lostTickCount < LOST_TICKS) {
+            /* Spin search: rotate in place */
+            setVel2(-RECOVERY_SPEED, RECOVERY_SPEED);
+        } else {
+            /* Timeout — give up */
+            setVel2(0, 0);
+            logLostTimeout();
+            changeState(&g_stateDone, "LOST");
+        }
+    } else {
+        /* Line reacquired */
+        g_lostTickCount = 0;
+
+        if (intersection) {
+            /* Could be intersection or target — verify */
+            formatGroundHex(g_ground, g_logDetail);
+            changeState(&g_stateVerifyTarget, g_logDetail);
+        }
+    }
+}
+
+/* -------------------------------------------------- */
+/* STATE_VERIFY_TARGET                                */
+/* -------------------------------------------------- */
+static void stateVerifyTarget_onEnter(void) {
+    double h;
+    getRobotPos(&g_verifyStartX, &g_verifyStartY, &h);
+    g_targetTickCount = 0;
+}
+
+static void stateVerifyTarget_onTick(void) {
+    double x, y, h;
+    double dist;
+
+    if (g_ground == SENSOR_ALL) {
+        g_targetTickCount++;
+        getRobotPos(&x, &y, &h);
+        dist = hypot(x - g_verifyStartX, y - g_verifyStartY);
+
+        // printf("DEBUG --- targetTickCount = %d - dist = %f\n",
+        //        g_targetTickCount, dist);
+
+        if (dist >= TARGET_DIST_THRESHOLD) {
+            /* Confirmed target */
+            changeState(&g_stateAtTarget, NULL);
+        } else {
+            /* Keep driving straight over the wide area */
+            setVel2(BASE_SPEED, BASE_SPEED);
+        }
+    } else {
+
+        /* Pattern broke — this was just an intersection */
+        // printf("DEBUG --- Target pattern broke\n");
+
+        changeState(&g_stateDetectIntersection, NULL);
+    }
+}
+
+/* -------------------------------------------------- */
+/* STATE_DETECT_INTERSECTION                          */
+/* -------------------------------------------------- */
+static void stateDetectIntersection_onEnter(void) {
+    g_targetTickCount = 0;
+}
+
+static void stateDetectIntersection_onTick(void) {
+    double x, y, h;
+    double distIntoIntersection;
+
+    setVel2(0, 0);
+    getRobotPos(&x, &y, &h);
+
+    distIntoIntersection = hypot(x - g_verifyStartX, y - g_verifyStartY);
+    // printf("DEBUG --- x, y = (%d, %d)\n", x, y);
+    // printf("DEBUG --- g_verifyStart = (%d, %d)\n", g_verifyStartX,
+    //        g_verifyStartY);
+    //
+    // printf("DEBUG --- distIntoIntersection = %f\n", distIntoIntersection);
+
+    if (!pushPose(x, y, h)) {
+        /* Stack full — abort safely */
+        setVel2(0, 0);
+        changeState(&g_stateDone, "STACK_OVERFLOW");
+    } else if (distIntoIntersection <= 10) {
+        setVel2(BASE_SPEED, BASE_SPEED);
+    } else {
+        logPush(g_stack_top + 1, x, y, h);
+        changeState(&g_stateTurnLeft, NULL);
+    }
+}
+
+/* -------------------------------------------------- */
+/* STATE_TURN_LEFT                                    */
+/* -------------------------------------------------- */
+static void stateTurnLeft_onEnter(void) {
+    startRotation(PI / 2.0); /* 90 deg left */
+}
+
+static void stateTurnLeft_onTick(void) {
+    rotationTick();
+    if (rotationDone()) {
+        changeState(&g_stateFollowLine, NULL);
+    }
+}
+
+/* -------------------------------------------------- */
+/* STATE_AT_TARGET                                    */
+/* -------------------------------------------------- */
+static void stateAtTarget_onTick(void) {
+    setVel2(0, 0);
+    getRobotPos(&g_targetX, &g_targetY, &g_targetH);
+    logTarget(g_targetX, g_targetY, g_targetH);
+
+    if (isStackEmpty()) {
+        /* Target is at start — nothing to return */
+        changeState(&g_stateDone, "TARGET_AT_START");
+    } else {
+        /* Pop first parent and turn toward it */
+        startReturnToParent();
+    }
+}
+
+/* -------------------------------------------------- */
+/* STATE_RETURN_TURN                                  */
+/* -------------------------------------------------- */
+static void stateReturnTurn_onEnter(void) {
+    double x, y, h;
+    getRobotPos(&x, &y, &h);
+    double deltaAngle =
+        normalizeAngle(atan2(g_returnTargetY - y, g_returnTargetX - x) - h);
+    startRotation(deltaAngle);
+}
+
+static void stateReturnTurn_onTick(void) {
+    rotationTick();
+    if (rotationDone()) {
+        changeState(&g_stateReturnFollow, NULL);
+    }
+}
+
+/* -------------------------------------------------- */
+/* STATE_RETURN_FOLLOW                                */
+/* -------------------------------------------------- */
+static void stateReturnFollow_onTick(void) {
+    double x, y, h;
+    double dist;
+
+    getRobotPos(&x, &y, &h);
+    dist = hypot(g_returnTargetX - x, g_returnTargetY - y);
+
+    if (dist < ORIGIN_TOLERANCE) {
+        /* Reached this node */
+        setVel2(0, 0);
+        if (isStackEmpty()) {
+            /* Back at start */
+            logMissionDone(g_targetX, g_targetY, g_targetH, g_stack_top + 1,
+                             g_missionTick);
+            changeState(&g_stateDone, NULL);
+        } else {
+            /* Next parent */
+            startReturnToParent();
+        }
+    } else {
+        /* Drive straight toward target */
+        setVel2(BASE_SPEED, BASE_SPEED);
+    }
+}
+
+/* -------------------------------------------------- */
+/* STATE_DONE                                         */
+/* -------------------------------------------------- */
+static void stateDone_onTick(void) {
+    setVel2(0, 0);
+    if (startButton()) {
+        restartMission();
+        if (!pushPose(0.0, 0.0, 0.0)) {
+            setVel2(0, 0);
+            changeState(&g_stateDone, "STACK_OVERFLOW");
+        } else {
+            logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
+        }
+    }
+}
+
+/* ========================================================================
+ *   STATE INSTANCE DEFINITIONS
+ * ======================================================================== */
+
+State g_stateIdle = { NULL, stateIdle_onTick, NULL, "IDLE" };
+State g_stateFollowLine = { NULL, stateFollowLine_onTick, NULL, "FOLLOW_LINE" };
+State g_stateDetectIntersection = { stateDetectIntersection_onEnter, stateDetectIntersection_onTick, NULL, "DETECT_INTERSECTION" };
+State g_stateTurnLeft = { stateTurnLeft_onEnter, stateTurnLeft_onTick, NULL, "TURN_LEFT" };
+State g_stateVerifyTarget = { stateVerifyTarget_onEnter, stateVerifyTarget_onTick, NULL, "VERIFY_TARGET" };
+State g_stateAtTarget = { NULL, stateAtTarget_onTick, NULL, "AT_TARGET" };
+State g_stateReturnTurn = { stateReturnTurn_onEnter, stateReturnTurn_onTick, NULL, "RETURN_TURN" };
+State g_stateReturnFollow = { NULL, stateReturnFollow_onTick, NULL, "RETURN_FOLLOW" };
+State g_stateDone = { NULL, stateDone_onTick, NULL, "DONE" };
+
+/* ========================================================================
  *   LED INDICATORS
  * ======================================================================== */
 
@@ -363,31 +615,23 @@ static void updateLEDs(void) {
   /* Clear all LEDs first */
   leds(0);
 
-  switch (g_state) {
-  case STATE_IDLE:
-  case STATE_FOLLOW_LINE:
-  case STATE_DETECT_INTERSECTION:
-  case STATE_TURN_LEFT:
-  case STATE_VERIFY_TARGET:
+  if (g_currentState == &g_stateIdle ||
+      g_currentState == &g_stateFollowLine ||
+      g_currentState == &g_stateDetectIntersection ||
+      g_currentState == &g_stateTurnLeft ||
+      g_currentState == &g_stateVerifyTarget) {
     /* Phase 1: exploring */
     led(0, 1);
-    break;
-
-  case STATE_AT_TARGET:
+  } else if (g_currentState == &g_stateAtTarget) {
     /* At target */
     led(1, 1);
-    break;
-
-  case STATE_RETURN_TURN:
-  case STATE_RETURN_FOLLOW:
+  } else if (g_currentState == &g_stateReturnTurn ||
+             g_currentState == &g_stateReturnFollow) {
     /* Phase 3: returning */
     led(2, 1);
-    break;
-
-  case STATE_DONE:
+  } else if (g_currentState == &g_stateDone) {
     /* Finished */
     led(3, 1);
-    break;
   }
 }
 
@@ -402,20 +646,14 @@ static void restartMission(void) {
   g_targetTickCount = 0;
   g_rotActive = false;
   g_missionTick = 0;
-  logTransition(STATE_FOLLOW_LINE, NULL);
-  g_state = STATE_FOLLOW_LINE;
+  changeState(&g_stateFollowLine, NULL);
 }
 
 static void startReturnToParent(void) {
-  double x, y, h;
+  double h;
   popPose(&g_returnTargetX, &g_returnTargetY, &h);
   logPop(g_stack_top + 1);
-  getRobotPos(&x, &y, &h);
-  double deltaAngle =
-      normalizeAngle(atan2(g_returnTargetY - y, g_returnTargetX - x) - h);
-  startRotation(deltaAngle);
-  logTransition(STATE_RETURN_TURN, NULL);
-  g_state = STATE_RETURN_TURN;
+  changeState(&g_stateReturnTurn, NULL);
 }
 
 /* ========================================================================
@@ -423,13 +661,6 @@ static void startReturnToParent(void) {
  * ======================================================================== */
 
 int main(void) {
-  unsigned int ground;
-  bool intersection;
-  bool lost;
-  double x, y, h;
-  double dist;
-  char logDetail[32];
-
   initPIC32();
   closedLoopControl(true);
   setVel2(0, 0);
@@ -448,10 +679,9 @@ int main(void) {
   restartMission();
   if (!pushPose(0.0, 0.0, 0.0)) {
     /* Stack overflow on very first push — should never happen */
-    setVel2(0, 0);
-    logTransition(STATE_DONE, "STACK_OVERFLOW");
-    g_state = STATE_DONE;
-  } else {
+            setVel2(0, 0);
+            changeState(&g_stateDone, "STACK_OVERFLOW");
+        } else {
     logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
   }
 
@@ -463,215 +693,20 @@ int main(void) {
     /* ---- Emergency stop ---- */
     if (stopButton()) {
       setVel2(0, 0);
-      logTransition(STATE_IDLE, "STOP_BUTTON");
-      g_state = STATE_IDLE;
+      changeState(&g_stateIdle, "STOP_BUTTON");
       continue;
     }
 
     /* ---- Sensor read order: analog first, then line ---- */
     readAnalogSensors();
-    ground = readLineSensors(0);
+    g_ground = readLineSensors(0);
 
     /* ---- Update LEDs for visual debugging ---- */
     updateLEDs();
 
     /* ---- State machine dispatch ---- */
-    switch (g_state) {
-
-    /* -------------------------------------------------- */
-    /* STATE_IDLE — wait for restart                        */
-    /* -------------------------------------------------- */
-    case STATE_IDLE:
-      setVel2(0, 0);
-      if (startButton()) {
-        restartMission();
-        if (!pushPose(0.0, 0.0, 0.0)) {
-          setVel2(0, 0);
-          logTransition(STATE_DONE, "STACK_OVERFLOW");
-          g_state = STATE_DONE;
-        } else {
-          logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
-        }
-      }
-      break;
-
-    /* -------------------------------------------------- */
-    /* STATE_FOLLOW_LINE — normal line following            */
-    /* -------------------------------------------------- */
-    case STATE_FOLLOW_LINE:
-      lineFollowTick(ground, &intersection, &lost);
-
-      if (lost) {
-        g_lostTickCount++;
-        if (g_lostTickCount < LOST_TICKS) {
-          /* Spin search: rotate in place */
-          setVel2(-RECOVERY_SPEED, RECOVERY_SPEED);
-        } else {
-          /* Timeout — give up */
-          setVel2(0, 0);
-          logLostTimeout();
-          logTransition(STATE_DONE, "LOST");
-          g_state = STATE_DONE;
-        }
-      } else {
-        /* Line reacquired */
-        g_lostTickCount = 0;
-
-        if (intersection) {
-          /* Could be intersection or target — verify */
-          getRobotPos(&g_verifyStartX, &g_verifyStartY, &h);
-          g_targetTickCount = 0;
-          formatGroundHex(ground, logDetail);
-          logTransition(STATE_VERIFY_TARGET, logDetail);
-          g_state = STATE_VERIFY_TARGET;
-        }
-      }
-      break;
-
-    /* -------------------------------------------------- */
-    /* STATE_VERIFY_TARGET — distinguish target vs crossing */
-    /* -------------------------------------------------- */
-    case STATE_VERIFY_TARGET:
-
-      if (ground == SENSOR_ALL) {
-        g_targetTickCount++;
-        getRobotPos(&x, &y, &h);
-        dist = hypot(x - g_verifyStartX, y - g_verifyStartY);
-
-        // printf("DEBUG --- targetTickCount = %d - dist = %f\n",
-        //        g_targetTickCount, dist);
-
-        if (dist >= TARGET_DIST_THRESHOLD) {
-          /* Confirmed target */
-          logTransition(STATE_AT_TARGET, NULL);
-          g_state = STATE_AT_TARGET;
-        } else {
-          /* Keep driving straight over the wide area */
-          setVel2(BASE_SPEED, BASE_SPEED);
-        }
-      } else {
-
-        /* Pattern broke — this was just an intersection */
-        // printf("DEBUG --- Target pattern broke\n");
-
-        g_targetTickCount = 0;
-        logTransition(STATE_DETECT_INTERSECTION, NULL);
-        g_state = STATE_DETECT_INTERSECTION;
-      }
-      break;
-
-    /* -------------------------------------------------- */
-    /* STATE_DETECT_INTERSECTION — halt, push pose, turn    */
-    /* -------------------------------------------------- */
-    case STATE_DETECT_INTERSECTION:
-      setVel2(0, 0);
-      getRobotPos(&x, &y, &h);
-
-      double distIntoIntersection =
-          hypot(x - g_verifyStartX, y - g_verifyStartY);
-      // printf("DEBUG --- x, y = (%d, %d)\n", x, y);
-      // printf("DEBUG --- g_verifyStart = (%d, %d)\n", g_verifyStartX,
-      //        g_verifyStartY);
-      //
-      // printf("DEBUG --- distIntoIntersection = %f\n", distIntoIntersection);
-
-      if (!pushPose(x, y, h)) {
-        /* Stack full — abort safely */
-        setVel2(0, 0);
-        logTransition(STATE_DONE, "STACK_OVERFLOW");
-        g_state = STATE_DONE;
-      } else if (distIntoIntersection <= 10) {
-        setVel2(BASE_SPEED, BASE_SPEED);
-      } else {
-        logPush(g_stack_top + 1, x, y, h);
-        startRotation(PI / 2.0); /* 90 deg left */
-        logTransition(STATE_TURN_LEFT, NULL);
-        g_state = STATE_TURN_LEFT;
-      }
-      break;
-
-    /* -------------------------------------------------- */
-    /* STATE_TURN_LEFT — non-blocking 90° left turn         */
-    /* -------------------------------------------------- */
-    case STATE_TURN_LEFT:
-      rotationTick();
-      if (rotationDone()) {
-        logTransition(STATE_FOLLOW_LINE, NULL);
-        g_state = STATE_FOLLOW_LINE;
-      }
-      break;
-
-    /* -------------------------------------------------- */
-    /* STATE_AT_TARGET — record pose, start return          */
-    /* -------------------------------------------------- */
-    case STATE_AT_TARGET:
-      setVel2(0, 0);
-      getRobotPos(&g_targetX, &g_targetY, &g_targetH);
-      logTarget(g_targetX, g_targetY, g_targetH);
-
-      if (isStackEmpty()) {
-        /* Target is at start — nothing to return */
-        logTransition(STATE_DONE, "TARGET_AT_START");
-        g_state = STATE_DONE;
-      } else {
-        /* Pop first parent and turn toward it */
-        startReturnToParent();
-      }
-      break;
-
-    /* -------------------------------------------------- */
-    /* STATE_RETURN_TURN — turn toward parent node          */
-    /* -------------------------------------------------- */
-    case STATE_RETURN_TURN:
-      rotationTick();
-      if (rotationDone()) {
-        logTransition(STATE_RETURN_FOLLOW, NULL);
-        g_state = STATE_RETURN_FOLLOW;
-      }
-      break;
-
-    /* -------------------------------------------------- */
-    /* STATE_RETURN_FOLLOW — drive straight to parent       */
-    /* -------------------------------------------------- */
-    case STATE_RETURN_FOLLOW:
-      getRobotPos(&x, &y, &h);
-      dist = hypot(g_returnTargetX - x, g_returnTargetY - y);
-
-      if (dist < ORIGIN_TOLERANCE) {
-        /* Reached this node */
-        setVel2(0, 0);
-        if (isStackEmpty()) {
-          /* Back at start */
-          logMissionDone(g_targetX, g_targetY, g_targetH, g_stack_top + 1,
-                         g_missionTick);
-          logTransition(STATE_DONE, NULL);
-          g_state = STATE_DONE;
-        } else {
-          /* Next parent */
-          startReturnToParent();
-        }
-      } else {
-        /* Drive straight toward target */
-        setVel2(BASE_SPEED, BASE_SPEED);
-      }
-      break;
-
-    /* -------------------------------------------------- */
-    /* STATE_DONE — halt, wait for restart                  */
-    /* -------------------------------------------------- */
-    case STATE_DONE:
-      setVel2(0, 0);
-      if (startButton()) {
-        restartMission();
-        if (!pushPose(0.0, 0.0, 0.0)) {
-          setVel2(0, 0);
-          logTransition(STATE_DONE, "STACK_OVERFLOW");
-          g_state = STATE_DONE;
-        } else {
-          logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
-        }
-      }
-      break;
+    if (g_currentState && g_currentState->onTick) {
+        g_currentState->onTick();
     }
   }
 
