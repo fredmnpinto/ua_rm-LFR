@@ -43,7 +43,7 @@
 typedef enum {
   STATE_IDLE,
   STATE_FOLLOW_LINE,
-  STATE_DETECT_INTERSECTION,
+  STATE_PREPARE_TURN,
   STATE_TURN_LEFT,
   STATE_VERIFY_TARGET,
   STATE_AT_TARGET,
@@ -75,7 +75,7 @@ typedef struct {
 
 extern State g_stateIdle;
 extern State g_stateFollowLine;
-extern State g_stateDetectIntersection;
+extern State g_statePrepareTurn;
 extern State g_stateTurnLeft;
 extern State g_stateVerifyTarget;
 extern State g_stateAtTarget;
@@ -361,7 +361,8 @@ static void stateFollowLine_onTick(void) {
   bool lost;
   centerRobotOnLine(g_ground, &lost);
 
-  bool intersection = g_ground == SENSOR_ALL || g_ground == SENSOR_LEFT;
+  bool intersection = g_ground == SENSOR_ALL;
+  bool pathToTheLeft = (g_ground & SENSOR_LEFT) == SENSOR_LEFT;
 
   if (lost) {
     g_lostTickCount++;
@@ -384,6 +385,14 @@ static void stateFollowLine_onTick(void) {
       printInt(g_ground, 2 | 5 << 16);
       printf("\n");
       changeState(&g_stateVerifyTarget, NULL);
+    } else if (pathToTheLeft) {
+      /* Path to the left — skip target verification, go directly to turn */
+      printf("[T %u] Detected left turn, ground=", g_missionTick);
+      printInt(g_ground, 2 | 5 << 16);
+      printf("\n");
+      double h;
+      getRobotPos(&g_verifyStartX, &g_verifyStartY, &h);
+      changeState(&g_statePrepareTurn, NULL);
     }
   }
 }
@@ -416,14 +425,14 @@ static void stateVerifyTarget_onTick(void) {
     /* Pattern broke — this was just an intersection */
     // printf("DEBUG --- Target pattern broke\n");
 
-    changeState(&g_stateDetectIntersection, NULL);
+    changeState(&g_statePrepareTurn, NULL);
   }
 }
 
 /* -------------------------------------------------- */
-/* STATE_DETECT_INTERSECTION                          */
+/* STATE_PREPARE_TURN */
 /* -------------------------------------------------- */
-static void stateDetectIntersection_onTick(void) {
+static void statePrepareTurn_onTick(void) {
   double x, y, h;
   double distIntoIntersection;
 
@@ -535,8 +544,8 @@ static void stateDone_onTick(void) {
 
 State g_stateIdle = {NULL, stateIdle_onTick, NULL, "IDLE"};
 State g_stateFollowLine = {NULL, stateFollowLine_onTick, NULL, "FOLLOW_LINE"};
-State g_stateDetectIntersection = {NULL, stateDetectIntersection_onTick, NULL,
-                                   "DETECT_INTERSECTION"};
+State g_statePrepareTurn = {NULL, statePrepareTurn_onTick, NULL,
+                                   "PREPARE_TURN"};
 State g_stateTurnLeft = {stateTurnLeft_onEnter, stateTurnLeft_onTick, NULL,
                          "TURN_LEFT"};
 State g_stateVerifyTarget = {stateVerifyTarget_onEnter,
@@ -557,7 +566,7 @@ static void updateLEDs(void) {
   leds(0);
 
   if (g_currentState == &g_stateIdle || g_currentState == &g_stateFollowLine ||
-      g_currentState == &g_stateDetectIntersection ||
+      g_currentState == &g_statePrepareTurn ||
       g_currentState == &g_stateTurnLeft ||
       g_currentState == &g_stateVerifyTarget) {
     /* Phase 1: exploring */
