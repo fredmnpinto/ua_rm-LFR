@@ -432,18 +432,23 @@ static void stateVerifyTarget_onTick(void) {
 /* -------------------------------------------------- */
 /* STATE_PREPARE_TURN */
 /* -------------------------------------------------- */
+static void statePrepareTurn_onEnter(void) {
+  double x, y, h;
+  getRobotPos(&x, &y, &h);
+  if (!pushPose(x, y, h)) {
+    changeState(&g_stateDone, "STACK_OVERFLOW");
+  }
+}
+
 static void statePrepareTurn_onTick(void) {
   double x, y, h;
   double distIntoIntersection;
 
-  setVel2(0, 0);
   getRobotPos(&x, &y, &h);
 
   distIntoIntersection = hypot(x - g_verifyStartX, y - g_verifyStartY);
 
-  if (!pushPose(x, y, h)) {
-    changeState(&g_stateDone, "STACK_OVERFLOW");
-  } else if (distIntoIntersection <= 10) {
+  if (distIntoIntersection <= 10) {
     setVel2(BASE_SPEED, BASE_SPEED);
   } else {
     changeState(&g_stateTurnLeft, NULL);
@@ -544,7 +549,7 @@ static void stateDone_onTick(void) {
 
 State g_stateIdle = {NULL, stateIdle_onTick, NULL, "IDLE"};
 State g_stateFollowLine = {NULL, stateFollowLine_onTick, NULL, "FOLLOW_LINE"};
-State g_statePrepareTurn = {NULL, statePrepareTurn_onTick, NULL,
+State g_statePrepareTurn = {statePrepareTurn_onEnter, statePrepareTurn_onTick, NULL,
                                    "PREPARE_TURN"};
 State g_stateTurnLeft = {stateTurnLeft_onEnter, stateTurnLeft_onTick, NULL,
                          "TURN_LEFT"};
