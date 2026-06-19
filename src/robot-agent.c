@@ -190,6 +190,15 @@ static void logLostTimeout(void) {
   g_logThisTick = true;
 }
 
+static void logGroundDetection(const char *type, unsigned int ground) {
+  if (g_logThisTick)
+    return;
+  printf("[T %u] Detected %s, ground=", g_missionTick, type);
+  printInt(ground, 2 | 5 << 16);
+  printf("\n");
+  g_logThisTick = true;
+}
+
 static void logMissionDone(double tx, double ty, double th, int depth,
                            int ticks) {
   if (g_logThisTick)
@@ -382,15 +391,11 @@ static void stateFollowLine_onTick(void) {
 
     if (intersection) {
       /* Could be intersection or target — verify */
-      printf("[T %u] Detected intersection, ground=", g_missionTick);
-      printInt(g_ground, 2 | 5 << 16);
-      printf("\n");
+      logGroundDetection("intersection", g_ground);
       changeState(&g_stateVerifyTarget, NULL);
     } else if (pathToTheLeft) {
       /* Path to the left — skip target verification, go directly to turn */
-      printf("[T %u] Detected left turn, ground=", g_missionTick);
-      printInt(g_ground, 2 | 5 << 16);
-      printf("\n");
+      logGroundDetection("left turn", g_ground);
       double h;
       getRobotPos(&g_verifyStartX, &g_verifyStartY, &h);
       changeState(&g_statePrepareTurn, NULL);
