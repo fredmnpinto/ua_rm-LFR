@@ -286,10 +286,10 @@ static void lineFollowTick(unsigned int ground, bool *pIntersection,
     /* Centered on line */
     setVel2(BASE_SPEED, BASE_SPEED);
   } else if ((ground & SENSOR_LEFT) != 0) {
-    /* Line detected on left side → drift right */
+    /* Line on left → turn left to recenter */
     setVel2(TURN_SPEED, BASE_SPEED);
   } else if ((ground & SENSOR_RIGHT) != 0) {
-    /* Line detected on right side → drift left */
+    /* Line on right → turn right to recenter */
     setVel2(BASE_SPEED, TURN_SPEED);
   } else {
     /* Fallback: any other pattern, drive straight slowly */
