@@ -53,10 +53,10 @@ typedef enum {
 } RobotState;
 
 typedef struct State {
-    void (*onEnter)(void);
-    void (*onTick)(void);
-    void (*onExit)(void);
-    const char* name;
+  void (*onEnter)(void);
+  void (*onTick)(void);
+  void (*onExit)(void);
+  const char *name;
 } State;
 
 /* ========================================================================
@@ -90,7 +90,7 @@ extern State g_stateDone;
 static StackEntry g_stack[MAX_STACK_DEPTH];
 static int g_stack_top = -1;
 
-static State* g_currentState = &g_stateIdle;
+static State *g_currentState = &g_stateIdle;
 
 static unsigned int g_ground = 0;
 static char g_logDetail[32];
@@ -102,7 +102,6 @@ static double g_targetH = 0.0;
 
 /* Tick counters and flags */
 static int g_lostTickCount = 0;
-static int g_targetTickCount = 0;
 
 /* Target verification start pose */
 static double g_verifyStartX = 0.0;
@@ -154,13 +153,13 @@ static void formatGroundHex(unsigned int ground, char *out) {
   out[11] = '\0';
 }
 
-static void logTransition(State* to, const char *detail) {
+static void logTransition(State *to, const char *detail) {
   if (g_logThisTick)
     return;
-  const char* fromName = g_currentState ? g_currentState->name : "NULL";
-  const char* toName = to ? to->name : "NULL";
-  printf("[T %u] %s -> %s%s%s\n", g_missionTick, fromName,
-         toName, detail ? " " : "", detail ? detail : "");
+  const char *fromName = g_currentState ? g_currentState->name : "NULL";
+  const char *toName = to ? to->name : "NULL";
+  printf("[T %u] %s -> %s%s%s\n", g_missionTick, fromName, toName,
+         detail ? " " : "", detail ? detail : "");
   g_logThisTick = true;
 }
 
@@ -208,7 +207,7 @@ static void logLostTimeout(void) {
 }
 
 static void logMissionDone(double tx, double ty, double th, int depth,
-                            int ticks) {
+                           int ticks) {
   if (g_logThisTick)
     return;
   printf("[T %u] DONE target=(%.2f,%.2f,%.2f) depth=%d ticks=%d\n",
@@ -255,7 +254,7 @@ static bool isStackEmpty(void) { return (g_stack_top < 0); }
  * \param pLost output: set to true if line is lost
  */
 static void lineFollowTick(unsigned int ground, bool *pIntersection,
-                            bool *pLost) {
+                           bool *pLost) {
   *pIntersection = false;
   *pLost = false;
 
@@ -368,15 +367,15 @@ static bool rotationDone(void) {
  *   changeState() HELPER
  * ======================================================================== */
 
-static void changeState(State* newState, const char* detail) {
-    logTransition(newState, detail);
-    if (g_currentState && g_currentState->onExit) {
-        g_currentState->onExit();
-    }
-    g_currentState = newState;
-    if (g_currentState && g_currentState->onEnter) {
-        g_currentState->onEnter();
-    }
+static void changeState(State *newState, const char *detail) {
+  logTransition(newState, detail);
+  if (g_currentState && g_currentState->onExit) {
+    g_currentState->onExit();
+  }
+  g_currentState = newState;
+  if (g_currentState && g_currentState->onEnter) {
+    g_currentState->onEnter();
+  }
 }
 
 /* ========================================================================
@@ -387,225 +386,221 @@ static void changeState(State* newState, const char* detail) {
 /* STATE_IDLE                                         */
 /* -------------------------------------------------- */
 static void stateIdle_onTick(void) {
-    setVel2(0, 0);
-    if (startButton()) {
-        restartMission();
-        if (!pushPose(0.0, 0.0, 0.0)) {
-            setVel2(0, 0);
-            changeState(&g_stateDone, "STACK_OVERFLOW");
-        } else {
-            logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
-        }
+  setVel2(0, 0);
+  if (startButton()) {
+    restartMission();
+    if (!pushPose(0.0, 0.0, 0.0)) {
+      setVel2(0, 0);
+      changeState(&g_stateDone, "STACK_OVERFLOW");
+    } else {
+      logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
     }
+  }
 }
 
 /* -------------------------------------------------- */
 /* STATE_FOLLOW_LINE                                  */
 /* -------------------------------------------------- */
 static void stateFollowLine_onTick(void) {
-    bool intersection;
-    bool lost;
-    lineFollowTick(g_ground, &intersection, &lost);
+  bool intersection;
+  bool lost;
+  lineFollowTick(g_ground, &intersection, &lost);
 
-    if (lost) {
-        g_lostTickCount++;
-        if (g_lostTickCount < LOST_TICKS) {
-            /* Spin search: rotate in place */
-            setVel2(-RECOVERY_SPEED, RECOVERY_SPEED);
-        } else {
-            /* Timeout — give up */
-            setVel2(0, 0);
-            logLostTimeout();
-            changeState(&g_stateDone, "LOST");
-        }
+  if (lost) {
+    g_lostTickCount++;
+    if (g_lostTickCount < LOST_TICKS) {
+      /* Spin search: rotate in place */
+      setVel2(-RECOVERY_SPEED, RECOVERY_SPEED);
     } else {
-        /* Line reacquired */
-        g_lostTickCount = 0;
-
-        if (intersection) {
-            /* Could be intersection or target — verify */
-            formatGroundHex(g_ground, g_logDetail);
-            changeState(&g_stateVerifyTarget, g_logDetail);
-        }
+      /* Timeout — give up */
+      setVel2(0, 0);
+      logLostTimeout();
+      changeState(&g_stateDone, "LOST");
     }
+  } else {
+    /* Line reacquired */
+    g_lostTickCount = 0;
+
+    if (intersection) {
+      /* Could be intersection or target — verify */
+      formatGroundHex(g_ground, g_logDetail);
+      changeState(&g_stateVerifyTarget, g_logDetail);
+    }
+  }
 }
 
 /* -------------------------------------------------- */
 /* STATE_VERIFY_TARGET                                */
 /* -------------------------------------------------- */
 static void stateVerifyTarget_onEnter(void) {
-    double h;
-    getRobotPos(&g_verifyStartX, &g_verifyStartY, &h);
-    g_targetTickCount = 0;
+  double h;
+  getRobotPos(&g_verifyStartX, &g_verifyStartY, &h);
 }
 
 static void stateVerifyTarget_onTick(void) {
-    double x, y, h;
-    double dist;
+  double x, y, h;
+  double dist;
 
-    if (g_ground == SENSOR_ALL) {
-        g_targetTickCount++;
-        getRobotPos(&x, &y, &h);
-        dist = hypot(x - g_verifyStartX, y - g_verifyStartY);
+  if (g_ground == SENSOR_ALL) {
+    getRobotPos(&x, &y, &h);
+    dist = hypot(x - g_verifyStartX, y - g_verifyStartY);
 
-        // printf("DEBUG --- targetTickCount = %d - dist = %f\n",
-        //        g_targetTickCount, dist);
-
-        if (dist >= TARGET_DIST_THRESHOLD) {
-            /* Confirmed target */
-            changeState(&g_stateAtTarget, NULL);
-        } else {
-            /* Keep driving straight over the wide area */
-            setVel2(BASE_SPEED, BASE_SPEED);
-        }
+    if (dist >= TARGET_DIST_THRESHOLD) {
+      /* Confirmed target */
+      changeState(&g_stateAtTarget, NULL);
     } else {
-
-        /* Pattern broke — this was just an intersection */
-        // printf("DEBUG --- Target pattern broke\n");
-
-        changeState(&g_stateDetectIntersection, NULL);
+      /* Keep driving straight over the wide area */
+      setVel2(BASE_SPEED, BASE_SPEED);
     }
+  } else {
+
+    /* Pattern broke — this was just an intersection */
+    // printf("DEBUG --- Target pattern broke\n");
+
+    changeState(&g_stateDetectIntersection, NULL);
+  }
 }
 
 /* -------------------------------------------------- */
 /* STATE_DETECT_INTERSECTION                          */
 /* -------------------------------------------------- */
-static void stateDetectIntersection_onEnter(void) {
-    g_targetTickCount = 0;
-}
-
 static void stateDetectIntersection_onTick(void) {
-    double x, y, h;
-    double distIntoIntersection;
+  double x, y, h;
+  double distIntoIntersection;
 
+  setVel2(0, 0);
+  getRobotPos(&x, &y, &h);
+
+  distIntoIntersection = hypot(x - g_verifyStartX, y - g_verifyStartY);
+  // printf("DEBUG --- x, y = (%d, %d)\n", x, y);
+  // printf("DEBUG --- g_verifyStart = (%d, %d)\n", g_verifyStartX,
+  //        g_verifyStartY);
+  //
+  // printf("DEBUG --- distIntoIntersection = %f\n", distIntoIntersection);
+
+  if (!pushPose(x, y, h)) {
+    /* Stack full — abort safely */
     setVel2(0, 0);
-    getRobotPos(&x, &y, &h);
-
-    distIntoIntersection = hypot(x - g_verifyStartX, y - g_verifyStartY);
-    // printf("DEBUG --- x, y = (%d, %d)\n", x, y);
-    // printf("DEBUG --- g_verifyStart = (%d, %d)\n", g_verifyStartX,
-    //        g_verifyStartY);
-    //
-    // printf("DEBUG --- distIntoIntersection = %f\n", distIntoIntersection);
-
-    if (!pushPose(x, y, h)) {
-        /* Stack full — abort safely */
-        setVel2(0, 0);
-        changeState(&g_stateDone, "STACK_OVERFLOW");
-    } else if (distIntoIntersection <= 10) {
-        setVel2(BASE_SPEED, BASE_SPEED);
-    } else {
-        logPush(g_stack_top + 1, x, y, h);
-        changeState(&g_stateTurnLeft, NULL);
-    }
+    changeState(&g_stateDone, "STACK_OVERFLOW");
+  } else if (distIntoIntersection <= 10) {
+    setVel2(BASE_SPEED, BASE_SPEED);
+  } else {
+    logPush(g_stack_top + 1, x, y, h);
+    changeState(&g_stateTurnLeft, NULL);
+  }
 }
 
 /* -------------------------------------------------- */
 /* STATE_TURN_LEFT                                    */
 /* -------------------------------------------------- */
 static void stateTurnLeft_onEnter(void) {
-    startRotation(PI / 2.0); /* 90 deg left */
+  startRotation(PI / 2.0); /* 90 deg left */
 }
 
 static void stateTurnLeft_onTick(void) {
-    rotationTick();
-    if (rotationDone()) {
-        changeState(&g_stateFollowLine, NULL);
-    }
+  rotationTick();
+  if (rotationDone()) {
+    changeState(&g_stateFollowLine, NULL);
+  }
 }
 
 /* -------------------------------------------------- */
 /* STATE_AT_TARGET                                    */
 /* -------------------------------------------------- */
 static void stateAtTarget_onTick(void) {
-    setVel2(0, 0);
-    getRobotPos(&g_targetX, &g_targetY, &g_targetH);
-    logTarget(g_targetX, g_targetY, g_targetH);
+  setVel2(0, 0);
+  getRobotPos(&g_targetX, &g_targetY, &g_targetH);
+  logTarget(g_targetX, g_targetY, g_targetH);
 
-    if (isStackEmpty()) {
-        /* Target is at start — nothing to return */
-        changeState(&g_stateDone, "TARGET_AT_START");
-    } else {
-        /* Pop first parent and turn toward it */
-        startReturnToParent();
-    }
+  if (isStackEmpty()) {
+    /* Target is at start — nothing to return */
+    changeState(&g_stateDone, "TARGET_AT_START");
+  } else {
+    /* Pop first parent and turn toward it */
+    startReturnToParent();
+  }
 }
 
 /* -------------------------------------------------- */
 /* STATE_RETURN_TURN                                  */
 /* -------------------------------------------------- */
 static void stateReturnTurn_onEnter(void) {
-    double x, y, h;
-    getRobotPos(&x, &y, &h);
-    double deltaAngle =
-        normalizeAngle(atan2(g_returnTargetY - y, g_returnTargetX - x) - h);
-    startRotation(deltaAngle);
+  double x, y, h;
+  getRobotPos(&x, &y, &h);
+  double deltaAngle =
+      normalizeAngle(atan2(g_returnTargetY - y, g_returnTargetX - x) - h);
+  startRotation(deltaAngle);
 }
 
 static void stateReturnTurn_onTick(void) {
-    rotationTick();
-    if (rotationDone()) {
-        changeState(&g_stateReturnFollow, NULL);
-    }
+  rotationTick();
+  if (rotationDone()) {
+    changeState(&g_stateReturnFollow, NULL);
+  }
 }
 
 /* -------------------------------------------------- */
 /* STATE_RETURN_FOLLOW                                */
 /* -------------------------------------------------- */
 static void stateReturnFollow_onTick(void) {
-    double x, y, h;
-    double dist;
+  double x, y, h;
+  double dist;
 
-    getRobotPos(&x, &y, &h);
-    dist = hypot(g_returnTargetX - x, g_returnTargetY - y);
+  getRobotPos(&x, &y, &h);
+  dist = hypot(g_returnTargetX - x, g_returnTargetY - y);
 
-    if (dist < ORIGIN_TOLERANCE) {
-        /* Reached this node */
-        setVel2(0, 0);
-        if (isStackEmpty()) {
-            /* Back at start */
-            logMissionDone(g_targetX, g_targetY, g_targetH, g_stack_top + 1,
-                             g_missionTick);
-            changeState(&g_stateDone, NULL);
-        } else {
-            /* Next parent */
-            startReturnToParent();
-        }
+  if (dist < ORIGIN_TOLERANCE) {
+    /* Reached this node */
+    setVel2(0, 0);
+    if (isStackEmpty()) {
+      /* Back at start */
+      logMissionDone(g_targetX, g_targetY, g_targetH, g_stack_top + 1,
+                     g_missionTick);
+      changeState(&g_stateDone, NULL);
     } else {
-        /* Drive straight toward target */
-        setVel2(BASE_SPEED, BASE_SPEED);
+      /* Next parent */
+      startReturnToParent();
     }
+  } else {
+    /* Drive straight toward target */
+    setVel2(BASE_SPEED, BASE_SPEED);
+  }
 }
 
 /* -------------------------------------------------- */
 /* STATE_DONE                                         */
 /* -------------------------------------------------- */
 static void stateDone_onTick(void) {
-    setVel2(0, 0);
-    if (startButton()) {
-        restartMission();
-        if (!pushPose(0.0, 0.0, 0.0)) {
-            setVel2(0, 0);
-            changeState(&g_stateDone, "STACK_OVERFLOW");
-        } else {
-            logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
-        }
+  setVel2(0, 0);
+  if (startButton()) {
+    restartMission();
+    if (!pushPose(0.0, 0.0, 0.0)) {
+      setVel2(0, 0);
+      changeState(&g_stateDone, "STACK_OVERFLOW");
+    } else {
+      logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
     }
+  }
 }
 
 /* ========================================================================
  *   STATE INSTANCE DEFINITIONS
  * ======================================================================== */
 
-State g_stateIdle = { NULL, stateIdle_onTick, NULL, "IDLE" };
-State g_stateFollowLine = { NULL, stateFollowLine_onTick, NULL, "FOLLOW_LINE" };
-State g_stateDetectIntersection = { stateDetectIntersection_onEnter, stateDetectIntersection_onTick, NULL, "DETECT_INTERSECTION" };
-State g_stateTurnLeft = { stateTurnLeft_onEnter, stateTurnLeft_onTick, NULL, "TURN_LEFT" };
-State g_stateVerifyTarget = { stateVerifyTarget_onEnter, stateVerifyTarget_onTick, NULL, "VERIFY_TARGET" };
-State g_stateAtTarget = { NULL, stateAtTarget_onTick, NULL, "AT_TARGET" };
-State g_stateReturnTurn = { stateReturnTurn_onEnter, stateReturnTurn_onTick, NULL, "RETURN_TURN" };
-State g_stateReturnFollow = { NULL, stateReturnFollow_onTick, NULL, "RETURN_FOLLOW" };
-State g_stateDone = { NULL, stateDone_onTick, NULL, "DONE" };
+State g_stateIdle = {NULL, stateIdle_onTick, NULL, "IDLE"};
+State g_stateFollowLine = {NULL, stateFollowLine_onTick, NULL, "FOLLOW_LINE"};
+State g_stateDetectIntersection = {NULL, stateDetectIntersection_onTick, NULL,
+                                   "DETECT_INTERSECTION"};
+State g_stateTurnLeft = {stateTurnLeft_onEnter, stateTurnLeft_onTick, NULL,
+                         "TURN_LEFT"};
+State g_stateVerifyTarget = {stateVerifyTarget_onEnter,
+                             stateVerifyTarget_onTick, NULL, "VERIFY_TARGET"};
+State g_stateAtTarget = {NULL, stateAtTarget_onTick, NULL, "AT_TARGET"};
+State g_stateReturnTurn = {stateReturnTurn_onEnter, stateReturnTurn_onTick,
+                           NULL, "RETURN_TURN"};
+State g_stateReturnFollow = {NULL, stateReturnFollow_onTick, NULL,
+                             "RETURN_FOLLOW"};
+State g_stateDone = {NULL, stateDone_onTick, NULL, "DONE"};
 
 /* ========================================================================
  *   LED INDICATORS
@@ -615,8 +610,7 @@ static void updateLEDs(void) {
   /* Clear all LEDs first */
   leds(0);
 
-  if (g_currentState == &g_stateIdle ||
-      g_currentState == &g_stateFollowLine ||
+  if (g_currentState == &g_stateIdle || g_currentState == &g_stateFollowLine ||
       g_currentState == &g_stateDetectIntersection ||
       g_currentState == &g_stateTurnLeft ||
       g_currentState == &g_stateVerifyTarget) {
@@ -643,7 +637,6 @@ static void restartMission(void) {
   setRobotPos(0.0, 0.0, 0.0);
   g_stack_top = -1;
   g_lostTickCount = 0;
-  g_targetTickCount = 0;
   g_rotActive = false;
   g_missionTick = 0;
   changeState(&g_stateFollowLine, NULL);
@@ -679,9 +672,9 @@ int main(void) {
   restartMission();
   if (!pushPose(0.0, 0.0, 0.0)) {
     /* Stack overflow on very first push — should never happen */
-            setVel2(0, 0);
-            changeState(&g_stateDone, "STACK_OVERFLOW");
-        } else {
+    setVel2(0, 0);
+    changeState(&g_stateDone, "STACK_OVERFLOW");
+  } else {
     logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
   }
 
@@ -706,7 +699,7 @@ int main(void) {
 
     /* ---- State machine dispatch ---- */
     if (g_currentState && g_currentState->onTick) {
-        g_currentState->onTick();
+      g_currentState->onTick();
     }
   }
 
