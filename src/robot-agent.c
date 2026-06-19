@@ -120,6 +120,11 @@ static double g_returnTargetY = 0.0;
 static unsigned int g_missionTick = 0;
 static bool g_logThisTick = false;
 
+/* Cached robot pose - updated once per tick */
+static double g_robotX = 0.0;
+static double g_robotY = 0.0;
+static double g_robotH = 0.0;
+
 /* ========================================================================
  *   FORWARD DECLARATIONS OF HELPER FUNCTIONS
  * ======================================================================== */
@@ -276,16 +281,13 @@ static void centerRobotOnLine(unsigned int ground, bool *pLost) {
  * ======================================================================== */
 
 static void startRotation(double deltaAngle) {
-  double x, y, h;
-  getRobotPos(&x, &y, &h);
-  g_rotTargetAngle = normalizeAngle(h + deltaAngle);
+  g_rotTargetAngle = normalizeAngle(g_robotH + deltaAngle);
   g_rotIntegral = 0.0;
   g_rotActive = true;
   logTurnStart(g_rotTargetAngle);
 }
 
 static void rotationTick(void) {
-  double x, y, h;
   double error;
   int cmdVel;
 
@@ -293,8 +295,7 @@ static void rotationTick(void) {
     return;
   }
 
-  getRobotPos(&x, &y, &h);
-  error = normalizeAngle(g_rotTargetAngle - h);
+  error = normalizeAngle(g_rotTargetAngle - g_robotH);
 
   g_rotIntegral += error;
   if (g_rotIntegral > PI / 2.0) {
@@ -315,15 +316,13 @@ static void rotationTick(void) {
 }
 
 static bool rotationDone(void) {
-  double x, y, h;
   double error;
 
   if (!g_rotActive) {
     return true;
   }
 
-  getRobotPos(&x, &y, &h);
-  error = normalizeAngle(g_rotTargetAngle - h);
+  error = normalizeAngle(g_rotTargetAngle - g_robotH);
 
   if (fabs(error) < 0.02) {
     g_rotActive = false;
@@ -693,6 +692,9 @@ int main(void) {
 
     /* ---- Update LEDs for visual debugging ---- */
     updateLEDs();
+
+    /* ---- Cache robot pose for this tick ---- */
+    getRobotPos(&g_robotX, &g_robotY, &g_robotH);
 
     /* ---- State machine dispatch ---- */
     if (g_currentState && g_currentState->onTick) {
