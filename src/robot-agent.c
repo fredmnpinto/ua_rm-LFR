@@ -227,6 +227,7 @@ static bool pushPose(double x, double y, double h) {
   g_stack[g_stack_top].x = x;
   g_stack[g_stack_top].y = y;
   g_stack[g_stack_top].h = h;
+  logPush(g_stack_top + 1, x, y, h);
   return true;
 }
 
@@ -389,12 +390,7 @@ static void stateIdle_onTick(void) {
   setVel2(0, 0);
   if (startButton()) {
     restartMission();
-    if (!pushPose(0.0, 0.0, 0.0)) {
-      setVel2(0, 0);
-      changeState(&g_stateDone, "STACK_OVERFLOW");
-    } else {
-      logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
-    }
+    pushPose(0.0, 0.0, 0.0); /* Cannot overflow — stack just reset */
   }
 }
 
@@ -479,13 +475,10 @@ static void stateDetectIntersection_onTick(void) {
   // printf("DEBUG --- distIntoIntersection = %f\n", distIntoIntersection);
 
   if (!pushPose(x, y, h)) {
-    /* Stack full — abort safely */
-    setVel2(0, 0);
     changeState(&g_stateDone, "STACK_OVERFLOW");
   } else if (distIntoIntersection <= 10) {
     setVel2(BASE_SPEED, BASE_SPEED);
   } else {
-    logPush(g_stack_top + 1, x, y, h);
     changeState(&g_stateTurnLeft, NULL);
   }
 }
@@ -574,12 +567,7 @@ static void stateDone_onTick(void) {
   setVel2(0, 0);
   if (startButton()) {
     restartMission();
-    if (!pushPose(0.0, 0.0, 0.0)) {
-      setVel2(0, 0);
-      changeState(&g_stateDone, "STACK_OVERFLOW");
-    } else {
-      logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
-    }
+    pushPose(0.0, 0.0, 0.0); /* Cannot overflow — stack just reset */
   }
 }
 
@@ -670,13 +658,7 @@ int main(void) {
 
   /* Reset state machine and push start pose onto stack */
   restartMission();
-  if (!pushPose(0.0, 0.0, 0.0)) {
-    /* Stack overflow on very first push — should never happen */
-    setVel2(0, 0);
-    changeState(&g_stateDone, "STACK_OVERFLOW");
-  } else {
-    logPush(g_stack_top + 1, 0.0, 0.0, 0.0);
-  }
+  pushPose(0.0, 0.0, 0.0); /* Cannot overflow — stack just reset */
 
   while (1) {
     /* ---- Timing: exactly one wait per iteration ---- */
