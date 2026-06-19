@@ -125,6 +125,9 @@ static double g_robotX = 0.0;
 static double g_robotY = 0.0;
 static double g_robotH = 0.0;
 
+/* Done state reason for LED indication */
+static const char *g_doneReason = NULL;
+
 /* ========================================================================
  *   FORWARD DECLARATIONS OF HELPER FUNCTIONS
  * ======================================================================== */
@@ -381,6 +384,7 @@ static void stateFollowLine_onTick(void) {
     } else {
       /* Timeout — give up */
       setVel2(0, 0);
+      g_doneReason = "LOST";
       logLostTimeout();
       changeState(&g_stateDone, "LOST");
     }
@@ -441,6 +445,7 @@ static void statePrepareTurn_onEnter(void) {
   double x, y, h;
   getRobotPos(&x, &y, &h);
   if (!pushPose(x, y, h)) {
+    g_doneReason = "STACK_OVERFLOW";
     changeState(&g_stateDone, "STACK_OVERFLOW");
   }
 }
@@ -489,6 +494,7 @@ static void stateAtTarget_onTick(void) {
 
   if (isStackEmpty()) {
     /* Target is at start — nothing to return */
+    g_doneReason = "TARGET_AT_START";
     changeState(&g_stateDone, "TARGET_AT_START");
   } else {
     /* Pop first parent and turn toward it */
@@ -537,6 +543,7 @@ static void stateReturnFollow_onTick(void) {
       setVel2(-RECOVERY_SPEED, RECOVERY_SPEED);
     } else {
       setVel2(0, 0);
+      g_doneReason = "LOST_RETURN";
       logLostTimeout();
       changeState(&g_stateDone, "LOST_RETURN");
     }
@@ -599,6 +606,9 @@ State g_stateDone = {NULL, stateDone_onTick, NULL, "DONE"};
  * ======================================================================== */
 
 static void updateLEDs(void) {
+  static unsigned int blinkCounter = 0;
+  blinkCounter++;
+
   /* Clear all LEDs first */
   leds(0);
 
@@ -616,8 +626,16 @@ static void updateLEDs(void) {
     /* Phase 3: returning */
     led(2, 1);
   } else if (g_currentState == &g_stateDone) {
-    /* Finished */
-    led(3, 1);
+    /* Finished - blink pattern for errors */
+    if (g_doneReason != NULL) {
+      /* Error: fast blink LED 3 */
+      if ((blinkCounter % 4) < 2) {
+        led(3, 1);
+      }
+    } else {
+      /* Success: solid LED 3 */
+      led(3, 1);
+    }
   }
 }
 
@@ -641,6 +659,7 @@ static void restartMission(void) {
   g_returnTargetY = 0.0;
   g_missionTick = 0;
   g_logThisTick = false;
+  g_doneReason = NULL;
   changeState(&g_stateFollowLine, NULL);
 }
 
