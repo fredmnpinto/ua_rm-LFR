@@ -93,7 +93,6 @@ static int g_stack_top = -1;
 static State *g_currentState = &g_stateIdle;
 
 static unsigned int g_ground = 0;
-static char g_logDetail[32];
 
 /* Target pose */
 static double g_targetX = 0.0;
@@ -136,22 +135,6 @@ static void startReturnToParent(void);
     g_missionTick++;                                                           \
     g_logThisTick = false;                                                     \
   } while (0)
-
-static void formatGroundHex(unsigned int ground, char *out) {
-  const char *hex = "0123456789ABCDEF";
-  out[0] = 'g';
-  out[1] = 'r';
-  out[2] = 'o';
-  out[3] = 'u';
-  out[4] = 'n';
-  out[5] = 'd';
-  out[6] = '=';
-  out[7] = '0';
-  out[8] = 'x';
-  out[9] = hex[(ground >> 4) & 0xF];
-  out[10] = hex[ground & 0xF];
-  out[11] = '\0';
-}
 
 static void logTransition(State *to, const char *detail) {
   if (g_logThisTick)
@@ -375,10 +358,10 @@ static void stateIdle_onTick(void) {
 /* STATE_FOLLOW_LINE                                  */
 /* -------------------------------------------------- */
 static void stateFollowLine_onTick(void) {
-  bool intersection;
   bool lost;
   centerRobotOnLine(g_ground, &lost);
-  intersection = g_ground == SENSOR_ALL;
+
+  bool intersection = g_ground == SENSOR_ALL || g_ground == SENSOR_LEFT;
 
   if (lost) {
     g_lostTickCount++;
@@ -397,8 +380,10 @@ static void stateFollowLine_onTick(void) {
 
     if (intersection) {
       /* Could be intersection or target — verify */
-      formatGroundHex(g_ground, g_logDetail);
-      changeState(&g_stateVerifyTarget, g_logDetail);
+      printf("[T %u] Detected intersection, ground=", g_missionTick);
+      printInt(g_ground, 2 | 5 << 16);
+      printf("\n");
+      changeState(&g_stateVerifyTarget, NULL);
     }
   }
 }
@@ -446,11 +431,6 @@ static void stateDetectIntersection_onTick(void) {
   getRobotPos(&x, &y, &h);
 
   distIntoIntersection = hypot(x - g_verifyStartX, y - g_verifyStartY);
-  // printf("DEBUG --- x, y = (%d, %d)\n", x, y);
-  // printf("DEBUG --- g_verifyStart = (%d, %d)\n", g_verifyStartX,
-  //        g_verifyStartY);
-  //
-  // printf("DEBUG --- distIntoIntersection = %f\n", distIntoIntersection);
 
   if (!pushPose(x, y, h)) {
     changeState(&g_stateDone, "STACK_OVERFLOW");
@@ -604,7 +584,17 @@ static void restartMission(void) {
   g_stack_top = -1;
   g_lostTickCount = 0;
   g_rotActive = false;
+  g_rotTargetAngle = 0.0;
+  g_rotIntegral = 0.0;
+  g_targetX = 0.0;
+  g_targetY = 0.0;
+  g_targetH = 0.0;
+  g_verifyStartX = 0.0;
+  g_verifyStartY = 0.0;
+  g_returnTargetX = 0.0;
+  g_returnTargetY = 0.0;
   g_missionTick = 0;
+  g_logThisTick = false;
   changeState(&g_stateFollowLine, NULL);
 }
 
