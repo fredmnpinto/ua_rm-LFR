@@ -251,33 +251,14 @@ static bool isStackEmpty(void) { return (g_stack_top < 0); }
 /**
  * \brief Execute one tick of bang-bang line following.
  * \param ground 5-bit sensor pattern from readLineSensors(0)
- * \param pIntersection output: set to true if intersection/target detected
  * \param pLost output: set to true if line is lost
  */
-static void lineFollowTick(unsigned int ground, bool *pIntersection,
-                           bool *pLost) {
-  *pIntersection = false;
+static void centerRobotOnLine(unsigned int ground, bool *pLost) {
   *pLost = false;
 
   if (ground == SENSOR_NONE) {
     /* Lost line — signal to caller, do not set motors here */
     *pLost = true;
-    return;
-  }
-
-  /* Count bits set (popcount) for wide-pattern detection */
-  int popcount = 0;
-  unsigned int tmp = ground;
-  while (tmp) {
-    popcount++;
-    tmp &= tmp - 1;
-  }
-
-  if (ground == SENSOR_ALL) {
-    /* Intersection or target area */
-    *pIntersection = true;
-    /* Keep moving slowly while deciding */
-    setVel2(BASE_SPEED, BASE_SPEED);
     return;
   }
 
@@ -396,7 +377,8 @@ static void stateIdle_onTick(void) {
 static void stateFollowLine_onTick(void) {
   bool intersection;
   bool lost;
-  lineFollowTick(g_ground, &intersection, &lost);
+  centerRobotOnLine(g_ground, &lost);
+  intersection = g_ground == SENSOR_ALL;
 
   if (lost) {
     g_lostTickCount++;
