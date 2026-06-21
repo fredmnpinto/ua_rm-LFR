@@ -20,11 +20,12 @@
 #define MAX_STACK_DEPTH 32
 #define TARGET_DIST_THRESHOLD 6
 #define BASE_SPEED 40
-#define TURN_SPEED 30
-#define RECOVERY_SPEED 40
+#define TURN_SPEED BASE_SPEED / 2
+#define RECOVERY_SPEED BASE_SPEED
 #define LOST_TICKS 25
 #define ORIGIN_TOLERANCE 0.05
-#define INTERSECTION_CENTER_DIST 10  /* Distance to drive into intersection before turning */
+#define INTERSECTION_CENTER_DIST                                               \
+  150 /* Distance to drive into intersection before turning */
 
 #define KP_ROT 40.0
 #define KI_ROT 5.0
@@ -84,10 +85,10 @@ static void stateDone_onTick(void);
 
 State g_stateIdle = {NULL, stateIdle_onTick, NULL, "IDLE"};
 State g_stateFollowLine = {NULL, stateFollowLine_onTick, NULL, "FOLLOW_LINE"};
-State g_statePrepareTurn = {statePrepareTurn_onEnter, statePrepareTurn_onTick, NULL,
-                                   "PREPARE_TURN"};
-State g_stateTurnLeft = {stateTurnLeft_onEnter, stateTurnLeft_onTick, stateTurnLeft_onExit,
-                          "TURN_LEFT"};
+State g_statePrepareTurn = {statePrepareTurn_onEnter, statePrepareTurn_onTick,
+                            NULL, "PREPARE_TURN"};
+State g_stateTurnLeft = {stateTurnLeft_onEnter, stateTurnLeft_onTick,
+                         stateTurnLeft_onExit, "TURN_LEFT"};
 State g_stateVerifyTarget = {stateVerifyTarget_onEnter,
                              stateVerifyTarget_onTick, NULL, "VERIFY_TARGET"};
 State g_stateAtTarget = {NULL, stateAtTarget_onTick, NULL, "AT_TARGET"};
@@ -120,6 +121,10 @@ static int g_lostTickCount = 0;
 static double g_verifyStartX = 0.0;
 static double g_verifyStartY = 0.0;
 
+static double g_startJointX = 0.0;
+static double g_startJointY = 0.0;
+static double g_startJointH = 0.0;
+
 /* Non-blocking rotation state */
 static double g_rotTargetAngle = 0.0;
 static double g_rotIntegral = 0.0;
@@ -131,7 +136,6 @@ static double g_returnTargetY = 0.0;
 
 /* Mission tick counter */
 static unsigned int g_missionTick = 0;
-static bool g_logThisTick = false;
 
 /* Cached robot pose - updated once per tick */
 static double g_robotX = 0.0;
@@ -152,81 +156,46 @@ static void startReturnToParent(void);
  *   LOGGING SUBSYSTEM
  * ======================================================================== */
 
-#define LOG_TICK()                                                             \
-  do {                                                                         \
-    g_missionTick++;                                                           \
-    g_logThisTick = false;                                                     \
-  } while (0)
-
 static void logTransition(State *to, const char *detail) {
-  if (g_logThisTick)
-    return;
   const char *fromName = g_currentState ? g_currentState->name : "NULL";
   const char *toName = to ? to->name : "NULL";
   printf("[T %u] %s -> %s%s%s\n", g_missionTick, fromName, toName,
          detail ? " " : "", detail ? detail : "");
-  g_logThisTick = true;
 }
 
 static void logTarget(double x, double y, double h) {
-  if (g_logThisTick)
-    return;
   printf("[T %u] TARGET x=%.3f y=%.3f h=%.2f\n", g_missionTick, x, y, h);
-  g_logThisTick = true;
 }
 
 static void logPush(int depth, double x, double y, double h) {
-  if (g_logThisTick)
-    return;
   printf("[T %u] PUSH depth=%d x=%.3f y=%.3f h=%.2f\n", g_missionTick, depth, x,
          y, h);
-  g_logThisTick = true;
 }
 
 static void logPop(int depth) {
-  if (g_logThisTick)
-    return;
   printf("[T %u] POP depth=%d\n", g_missionTick, depth);
-  g_logThisTick = true;
 }
 
 static void logTurnStart(double targetAngle) {
-  if (g_logThisTick)
-    return;
   printf("[T %u] TURN_LEFT target=%.2f\n", g_missionTick, targetAngle);
-  g_logThisTick = true;
 }
 
-static void logTurnDone(void) {
-  if (g_logThisTick)
-    return;
-  printf("[T %u] TURN_DONE\n", g_missionTick);
-  g_logThisTick = true;
-}
+static void logTurnDone(void) { printf("[T %u] TURN_DONE\n", g_missionTick); }
 
 static void logLostTimeout(void) {
-  if (g_logThisTick)
-    return;
   printf("[T %u] LOST_TIMEOUT\n", g_missionTick);
-  g_logThisTick = true;
 }
 
 static void logGroundDetection(const char *type, unsigned int ground) {
-  if (g_logThisTick)
-    return;
   printf("[T %u] Detected %s, ground=", g_missionTick, type);
   printInt(ground, 2 | 5 << 16);
   printf("\n");
-  g_logThisTick = true;
 }
 
 static void logMissionDone(double tx, double ty, double th, int depth,
                            int ticks) {
-  if (g_logThisTick)
-    return;
   printf("[T %u] DONE target=(%.2f,%.2f,%.2f) depth=%d ticks=%d\n",
          g_missionTick, tx, ty, th, depth, ticks);
-  g_logThisTick = true;
 }
 
 /* ========================================================================
@@ -456,11 +425,16 @@ static void stateVerifyTarget_onTick(void) {
 /* -------------------------------------------------- */
 static void statePrepareTurn_onEnter(void) {
   double x, y, h;
-  getRobotPos(&x, &y, &h);
-  if (!pushPose(x, y, h)) {
+  getRobotPos(&g_startJointX, &g_startJointX, &g_startJointH);
+
+  if (!pushPose(g_startJointX, g_startJointY, g_startJointH)) {
     g_doneReason = "STACK_OVERFLOW";
     changeState(&g_stateDone, "STACK_OVERFLOW");
   }
+
+  setVel2(0.0, 0.0);
+  while (!startButton())
+    ;
 }
 
 static void statePrepareTurn_onTick(void) {
@@ -469,11 +443,14 @@ static void statePrepareTurn_onTick(void) {
 
   getRobotPos(&x, &y, &h);
 
-  distIntoIntersection = hypot(x - g_verifyStartX, y - g_verifyStartY);
+  distIntoIntersection =
+      sqrt(pow(x - g_startJointX, 2) + pow(y - g_startJointY, 2));
 
   if (distIntoIntersection <= INTERSECTION_CENTER_DIST) {
     setVel2(BASE_SPEED, BASE_SPEED);
   } else {
+    printf("DEBUG --- Finished prepare turn after dist = %f (mm)\n",
+           distIntoIntersection);
     changeState(&g_stateTurnLeft, NULL);
   }
 }
@@ -652,7 +629,6 @@ static void restartMission(void) {
   g_returnTargetX = 0.0;
   g_returnTargetY = 0.0;
   g_missionTick = 0;
-  g_logThisTick = false;
   g_doneReason = NULL;
   changeState(&g_stateFollowLine, NULL);
 }
@@ -690,7 +666,7 @@ int main(void) {
   while (1) {
     /* ---- Timing: exactly one wait per iteration ---- */
     waitTick40ms();
-    LOG_TICK();
+    g_missionTick++;
 
     /* ---- Emergency stop ---- */
     if (stopButton()) {
@@ -702,6 +678,8 @@ int main(void) {
     /* ---- Sensor read order: analog first, then line ---- */
     readAnalogSensors();
     g_ground = readLineSensors(0);
+
+    // logGroundDetection("-- DEBUG --", g_ground);
 
     /* ---- Update LEDs for visual debugging ---- */
     updateLEDs();
