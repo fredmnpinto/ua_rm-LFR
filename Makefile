@@ -42,7 +42,8 @@ $(HEX): $(SRCS) $(HDRS)
 	@mkdir -p $(BUILDDIR)
 	@echo "  CC      $(SRCS) -> $(HEX)"
 	cd $(BUILDDIR) && ../$(PCOMPILE) -DROBOT=$(ROBOT) $(addprefix ../,$(SRCS))
-	cp $(SRCDIR)/*.hex $(BUILDDIR)
+	@echo "  MOVE    build artifacts to $(BUILDDIR)/"
+	@mv $(SRCDIR)/*.o $(SRCDIR)/*.elf $(SRCDIR)/*.hex $(SRCDIR)/*.map $(BUILDDIR)/ 2>/dev/null || true
 	@echo "  BUILD   $(HEX) ready"
 
 # Flash: build (if needed) then program the robot
@@ -64,10 +65,11 @@ term:
 deploy: flash
 	@echo "  DEPLOY  complete"
 
-# Clean: remove all build artifacts
+# Clean: remove all build artifacts from both src/ and build/
 clean:
 	@echo "  CLEAN   removing build artifacts"
 	rm -rf $(BUILDDIR)
+	rm -f $(SRCDIR)/*.o $(SRCDIR)/*.elf $(SRCDIR)/*.hex $(SRCDIR)/*.map
 	@echo "  CLEAN   done"
 
 # Run: full workflow — build, flash, then open terminal
