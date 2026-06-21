@@ -1,11 +1,12 @@
 # Functional Specification: TP2 Path Finder Robot
 
-> **Version**: 1.1.0 | **Date**: 2026-06-21 | **Author**: Documenter Agent | **Status**: Implemented
+> **Version**: 1.2.0 | **Date**: 2026-06-22 | **Author**: Documenter Agent | **Status**: Implemented
 
 ## Change Log
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.2.0 | 2026-06-22 | Documenter | Refactored from monolithic `robot-agent.c` to modular architecture with Makefile build system; updated component table, data structures, references, and build commands |
 | 1.1.0 | 2026-06-21 | Documenter | Updated to match actual table-driven state machine implementation; replaced `STATE_DETECT_INTERSECTION` with `STATE_PREPARE_TURN`; logging is now unconditional; removed `TARGET_TICK_THRESHOLD`; updated constants and sensor interpretation |
 | 1.0.0 | 2026-06-14 | Documenter | Initial specification based on implemented `robot-agent.c` |
 
@@ -43,7 +44,7 @@ This spec serves as:
 
 ### 1.3 Audience
 
-- **Developers**: Implementing or modifying `robot-agent.c`
+- **Developers**: Implementing or modifying the agent source files
 - **Testers / Lab Operators**: Debugging robot behaviour during demo runs
 - **Report Authors**: Extracting design decisions and algorithm descriptions for the Springer LNCS report
 - **Course Evaluators**: Verifying compliance with assignment requirements
@@ -54,7 +55,15 @@ This spec serves as:
 - `AGENTS.md` — Project structure, build instructions, and coding guidelines
 - `src/rm-mr32.h` / `src/rm-mr32.c` — DETI hardware library (READ-ONLY)
 - `docs/references.md` — External resources on PID, odometry, and PIC32 programming
-- `src/robot-agent.c` — Implementation file (this spec describes the system as implemented therein)
+- `src/robot-agent.c` — Main entry point: hardware init and control loop dispatch
+- `src/config.h` — Compile-time constants, sensor masks, and `Pose` typedef
+- `src/state_machine.c` / `src/state_machine.h` — 9-state table-driven FSM and mission logic
+- `src/nav_stack.c` / `src/nav_stack.h` — Static LIFO pose stack for parent-pointer DFS
+- `src/line_follower.c` / `src/line_follower.h` — Bang-bang line following and lost-line recovery
+- `src/rotation.c` / `src/rotation.h` — Non-blocking PID rotation controller
+- `src/logging.c` / `src/logging.h` — Unconditional serial trace subsystem
+- `src/leds.c` / `src/leds.h` — LED phase indicators and error blink patterns
+- `Makefile` — Build system with per-robot calibration support
 
 ---
 
@@ -69,7 +78,7 @@ The MR32 robot platform provides:
 - 40 ms periodic timer tick (`waitTick40ms()`)
 - Physical start/stop buttons and 4 status LEDs
 
-The agent (`robot-agent.c`) implements a complete 3-phase mission with a 9-state table-driven finite-state machine, non-blocking PID rotation, and a static pose stack for parent-pointer return navigation.
+The agent is implemented as a modular C codebase. `robot-agent.c` contains a thin `main()` that initializes hardware and dispatches to the current state's tick handler. Mission logic is split across dedicated modules: a 9-state table-driven finite-state machine (`state_machine`), non-blocking PID rotation (`rotation`), a static pose stack for parent-pointer return navigation (`nav_stack`), bang-bang line following (`line_follower`), unconditional serial logging (`logging`), and LED phase indicators (`leds`). All compile-time constants and the `Pose` typedef are centralized in `config.h`. Build is orchestrated by a `Makefile` at the project root.
 
 ### 2.2 Target State (To-Be)
 
@@ -237,7 +246,7 @@ The robot shall, upon pressing the start button:
 **Dependencies**: None
 **Acceptance Criteria**:
 - [ ] All data structures (stack, state variables, pose records) are declared as `static` global variables or local static arrays
-- [ ] No calls to `malloc`, `calloc`, `realloc`, or `free` anywhere in `robot-agent.c`
+- [ ] No calls to `malloc`, `calloc`, `realloc`, or `free` anywhere in the agent source files
 - [ ] Stack maximum depth is a compile-time constant (`MAX_STACK_DEPTH = 32`)
 **Status**: Implemented
 
@@ -268,7 +277,7 @@ The robot shall, upon pressing the start button:
 - [ ] Logged events include: state transitions, stack push/pop, target detection, turn start/done, lost timeout, mission done, ground detection
 - [ ] Logging functions: `logTransition()`, `logTarget()`, `logPush()`, `logPop()`, `logTurnStart()`, `logTurnDone()`, `logLostTimeout()`, `logGroundDetection()`, `logMissionDone()`
 - [ ] No `printf` is called inside motor control or sensor read paths (only in state-transition logic)
-- [ ] Standard compile command produces a binary with logging enabled: `pcompile robot-agent.c rm-mr32.c`
+- [ ] Standard compile command produces a binary with logging enabled: `make`
 **Status**: Implemented
 
 ---
@@ -283,7 +292,7 @@ The robot shall, upon pressing the start button:
 | NFR-002 | Performance | Floating-point in ISRs | Prohibited | All `float`/`double` math in main loop only |
 | NFR-003 | Memory | Dynamic allocation | Prohibited | Zero `malloc`/`free` calls |
 | NFR-004 | Timing | Control loop deadline | Period | Exactly 40 ms per iteration |
-| NFR-005 | Portability | Logging | Compile-time | Clean compile with standard `pcompile` command |
+| NFR-005 | Portability | Logging | Compile-time | Clean compile with standard `make` command |
 
 ---
 
@@ -291,7 +300,7 @@ The robot shall, upon pressing the start button:
 **Description**: The implementation shall be written in C only. C++ features (classes, templates, STL) are prohibited.
 **Priority**: Must
 **Acceptance Criteria**:
-- [ ] Source file compiles with `pcompile` (PIC32 GCC 3.4.4) without `-x c++` or similar
+- [ ] Source files compile with `make` (PIC32 GCC 3.4.4) without `-x c++` or similar
 - [ ] No `class`, `template`, `namespace`, or C++ standard library headers
 **Status**: Implemented
 
@@ -331,10 +340,10 @@ The robot shall, upon pressing the start button:
 ---
 
 #### NFR-005: Compile-Time Portability
-**Description**: The codebase shall compile cleanly with the standard `pcompile` command.
+**Description**: The codebase shall compile cleanly with the standard `make` command.
 **Priority**: Should
 **Acceptance Criteria**:
-- [ ] `pcompile robot-agent.c rm-mr32.c` succeeds
+- [ ] `make` succeeds from the project root
 - [ ] No linker errors or undefined references
 - [ ] Code size is acceptable for PIC32 flash memory
 **Status**: Implemented
@@ -345,16 +354,17 @@ The robot shall, upon pressing the start button:
 
 ### 5.1 Components
 
-| Component | Purpose | Responsibilities |
-|-----------|---------|-----------------|
+| Component | Files | Purpose | Responsibilities |
+|-----------|-------|---------|-----------------|
 | **Hardware Abstraction Layer** | `rm-mr32.c` / `rm-mr32.h` | Timer ISRs, ADC, encoder reading, motor PWM, odometry integration |
-| **Main Control Loop** | `main()` in `robot-agent.c` | 40 ms tick synchronization, sensor polling, emergency stop, dispatches to current state's `onTick` |
-| **Line Follower** | `centerRobotOnLine()` | Bang-bang control based on 5-bit ground sensor pattern; returns `pLost` flag |
-| **Rotation Controller** | `startRotation()`, `rotationTick()`, `rotationDone()` | Non-blocking PID heading control using odometry feedback |
-| **Navigation Stack** | `pushPose()`, `popPose()`, `isStackEmpty()` | Static LIFO stack of poses for parent-pointer DFS return path |
-| **State Machine** | Table-driven `State` struct with `onEnter`/`onTick`/`onExit` callbacks | 9-state finite-state machine governing mission phases |
-| **LED Indicator** | `updateLEDs()` | Visual feedback of current mission phase; includes blink pattern for error states (`g_doneReason != NULL`) |
-| **Logging Subsystem** | `logTransition()`, `logTarget()`, etc. | Unconditional serial trace of mission events |
+| **Main Control Loop** | `robot-agent.c` | 40 ms tick synchronization, sensor polling, emergency stop, dispatches to current state's `onTick` |
+| **Configuration** | `config.h` | Centralized compile-time constants, sensor bit masks, and shared type definitions (`Pose`) |
+| **State Machine** | `state_machine.c` / `state_machine.h` | Table-driven `State` struct with `onEnter`/`onTick`/`onExit` callbacks | 9-state finite-state machine governing mission phases |
+| **Line Follower** | `line_follower.c` / `line_follower.h` | Bang-bang control based on 5-bit ground sensor pattern; returns `pLost` flag |
+| **Rotation Controller** | `rotation.c` / `rotation.h` | Non-blocking PID heading control using odometry feedback |
+| **Navigation Stack** | `nav_stack.c` / `nav_stack.h` | Static LIFO stack of poses for parent-pointer DFS return path |
+| **LED Indicator** | `leds.c` / `leds.h` | Visual feedback of current mission phase; includes blink pattern for error states (`g_doneReason != NULL`) |
+| **Logging Subsystem** | `logging.c` / `logging.h` | Unconditional serial trace of mission events |
 
 ### 5.2 State Machine
 
@@ -425,6 +435,17 @@ Transitions are performed by `changeState(State *newState, const char *detail)`,
 ```
 
 ### 5.4 Data Structures
+
+#### Pose
+```c
+typedef struct {
+    double x;   // X coordinate [m]
+    double y;   // Y coordinate [m]
+    double h;   // Heading [rad]
+} Pose;
+```
+
+**Usage**: Defined in `config.h` and used throughout the codebase (state machine, navigation stack, rotation controller, and logging) to represent robot poses and stack entries uniformly.
 
 #### State
 ```c
@@ -551,7 +572,7 @@ setVel2(-cmdVel, cmdVel);   // Positive cmdVel = left turn (counter-clockwise)
 ## 7. Testing Strategy
 
 ### 7.1 Unit-Level Validation (Code Review / Static Analysis)
-- Verify no `malloc` / `free` calls exist (`grep -n "malloc\|free" src/robot-agent.c`)
+- Verify no `malloc` / `free` calls exist (`grep -rn "malloc\|free" src/*.c`)
 - Verify `waitTick40ms()` is the only timing primitive in the main loop
 - Verify `readAnalogSensors()` precedes `readLineSensors(0)` in every path through the loop
 - Verify all state instances have their `onTick` handler defined
@@ -648,20 +669,33 @@ setVel2(-cmdVel, cmdVel);   // Positive cmdVel = left turn (counter-clockwise)
 # Enter development shell
 nix develop --impure
 
-cd src
-
-# Standard build
-pcompile robot-agent.c rm-mr32.c
+# Standard build (default ROBOT=1)
+make
 
 # Build with specific robot calibration
-pcompile -DROBOT=5 robot-agent.c rm-mr32.c
+make ROBOT=5
 
-# Flash to robot
-ldpic32 -w robot-agent.hex
+# Build and flash to robot
+make flash
 
 # Open serial terminal
-pterm
+make term
+
+# Build + flash
+make deploy
+
+# Build + flash + terminal
+make run
+
+# Remove build artifacts
+make clean
 ```
+
+Build artifacts are placed in `build/`:
+- `build/robot-agent.hex` — Flashable binary
+- `build/robot-agent.elf` — Linked ELF
+- `build/*.o` — Object files
+- `build/robot-agent.map` — Linker map
 
 ### Appendix D: Related Documents
 
@@ -670,3 +704,10 @@ pterm
 - `docs/references.md` — External resources on PID, odometry, and PIC32 programming
 - `src/rm-mr32.h` — Hardware API header
 - `src/rm-mr32.c` — Hardware library implementation (READ-ONLY)
+- `src/config.h` — Compile-time constants and shared type definitions
+- `src/state_machine.h` — FSM state declarations and transition API
+- `src/nav_stack.h` — Navigation stack API
+- `src/line_follower.h` — Line follower API
+- `src/rotation.h` — Rotation controller API
+- `src/logging.h` — Logging subsystem API
+- `src/leds.h` — LED indicator API
