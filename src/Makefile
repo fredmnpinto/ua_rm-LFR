@@ -9,7 +9,7 @@ SRCS = robot-agent.c nav_stack.c line_follower.c rotation.c logging.c leds.c sta
 TARGET = robot-agent
 
 all:
-	pcompile -DROBOT=$(ROBOT) $(SRCS)
+	./pcompile -DROBOT=$(ROBOT) $(SRCS)
 
 clean:
 	rm -f *.o *.hex *.elf *.map $(TARGET)
