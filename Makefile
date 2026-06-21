@@ -14,7 +14,7 @@ TERM     = pterm
 # Target and source files
 TARGET   = robot-agent
 HEX      = $(BUILDDIR)/$(TARGET).hex
-SRCS     = $(SRCDIR)/robot-agent.c $(SRCDIR)/rm-mr32.c
+SRCS     = $(SRCDIR)/robot-agent.c $(SRCDIR)/nav_stack.c $(SRCDIR)/line_follower.c $(SRCDIR)/rotation.c $(SRCDIR)/logging.c $(SRCDIR)/leds.c $(SRCDIR)/state_machine.c $(SRCDIR)/rm-mr32.c
 HDRS     = $(SRCDIR)/rm-mr32.h
 
 # Phony targets (do not represent files)
