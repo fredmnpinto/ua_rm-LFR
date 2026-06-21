@@ -40,7 +40,7 @@ CompileFlags:
 
     # Include paths: PIC32 toolchain (Nix store fallback — matches flake.nix)
     # If the Nix store path differs on your machine, update or remove this line.
-    - -I/nix/store/ry284qsvyq3nf0aclbxq2y258fv1si1r-pic32-toolchain-2017.09.15/opt/pic32mx/include
+    - -I/nix/store/arwhjx9g43m3jbh2lgzblh67dkmflrg0-pic32-toolchain-2017.09.15/opt/pic32mx/include
 
     # Include paths: GCC internal headers (for stddef.h, limits.h, etc.)
     - -I/opt/pic32mx/lib/gcc/pic32mx/3.4.4/include
