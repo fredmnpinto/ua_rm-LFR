@@ -33,6 +33,7 @@ $(HEX): $(SRCS) $(HDRS)
 	@mkdir -p $(BUILDDIR)
 	@echo "  CC      $(SRCS) -> $(HEX)"
 	cd $(BUILDDIR) && $(CC) $(CFLAGS) $(addprefix ../,$(SRCS))
+	cp $(SRCDIR)/*.hex $(BUILDDIR)
 	@echo "  BUILD   $(HEX) ready"
 
 # ---------------------------------------------------------------------------
