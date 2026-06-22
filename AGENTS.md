@@ -144,4 +144,5 @@ Supported IDs: 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12.
 
 ## References
 
-See `docs/references.md` for curated links on line following, PID, odometry, and PIC32 hardware.
+- [`README.md`](README.md) — Primary project documentation: quick-start guide, state-machine diagrams, and build instructions
+- [`docs/references.md`](docs/references.md) — Curated external links on line following, PID, odometry, and PIC32 hardware
