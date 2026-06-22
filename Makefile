@@ -25,8 +25,8 @@ ROBOT    ?= 1
 # Target and source files
 TARGET   = robot-agent
 HEX      = $(BUILDDIR)/$(TARGET).hex
-SRCS     = $(SRCDIR)/robot-agent.c $(SRCDIR)/nav_stack.c $(SRCDIR)/line_follower.c $(SRCDIR)/rotation.c $(SRCDIR)/logging.c $(SRCDIR)/leds.c $(SRCDIR)/state_machine.c $(SRCDIR)/rm-mr32.c
-HDRS     = $(SRCDIR)/config.h $(SRCDIR)/nav_stack.h $(SRCDIR)/line_follower.h $(SRCDIR)/rotation.h $(SRCDIR)/logging.h $(SRCDIR)/leds.h $(SRCDIR)/state_machine.h $(SRCDIR)/rm-mr32.h
+SRCS     = $(SRCDIR)/robot-agent.c $(SRCDIR)/nav_graph.c $(SRCDIR)/line_follower.c $(SRCDIR)/rotation.c $(SRCDIR)/logging.c $(SRCDIR)/leds.c $(SRCDIR)/state_machine.c $(SRCDIR)/rm-mr32.c
+HDRS     = $(SRCDIR)/config.h $(SRCDIR)/nav_graph.h $(SRCDIR)/line_follower.h $(SRCDIR)/rotation.h $(SRCDIR)/logging.h $(SRCDIR)/leds.h $(SRCDIR)/state_machine.h $(SRCDIR)/rm-mr32.h
 
 # Phony targets
 .PHONY: all build flash term deploy clean run

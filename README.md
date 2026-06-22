@@ -1,13 +1,13 @@
 # TP2 Path Finder Robot
 
 Embedded C agent for a differential-drive PIC32 robot (DETI MR32 platform).  
-Follows black lines, turns left at intersections, detects a wide target line, and returns to the start position via parent-pointer DFS.
+Follows black lines, turns left at intersections, detects a wide target line, and returns to the start position via Dijkstra shortest-path on a navigation graph.
 
 ## Mission Overview
 
 - Phase 1 — **Explore**: Follow lines and always turn left at intersections (acyclic tree exploration)
 - Phase 2 — **Detect Target**: Distinguish the wide target line from normal intersections using a distance threshold
-- Phase 3 — **Return**: Navigate back to the start via the shortest path using a static pose stack recorded during exploration
+- Phase 3 — **Return**: Navigate back to the start via the shortest path using Dijkstra on a graph recorded during exploration (two-leg return: origin→target, then target→origin)
 
 ## Quick Start
 
@@ -27,14 +27,18 @@ Follows black lines, turns left at intersections, detects a wide target line, an
 ├── Makefile              # Build system (supports ROBOT=N calibration)
 ├── src/
 │   ├── robot-agent.c     # Main loop: init, 40 ms tick, sensor dispatch
-│   ├── state_machine.c/h # 9-state table-driven FSM
+│   ├── state_machine.c/h # 11-state table-driven FSM
 │   ├── line_follower.c/h # Bang-bang line following
 │   ├── rotation.c/h      # PI heading controller for in-place turns
-│   ├── nav_stack.c/h     # Static pose stack (parent-pointer DFS)
+│   ├── nav_graph.c/h     # Static navigation graph (nodes, edges, Dijkstra)
 │   ├── leds.c/h          # Phase indication via 4 on-board LEDs
 │   ├── logging.c/h       # printf-based state transition logging
 │   ├── config.h          # Compile-time constants, sensor masks, Pose typedef
 │   └── rm-mr32.c/h       # DETI hardware library (READ-ONLY)
+├── tests/
+│   ├── test_nav_graph.c  # Host-runnable unit tests for nav_graph logic
+│   ├── rm-mr32.h         # Mock hardware header for host compilation
+│   └── Makefile          # Test build runner
 ├── docs/
 │   ├── specs/
 │   │   └── functional-spec.md  # Full FR-XXX requirements
@@ -78,13 +82,15 @@ Build artifacts are placed in `build/`:
 | State | Phase | Description |
 |-------|-------|-------------|
 | `STATE_IDLE` | — | Motors off, waiting for `startButton()` |
-| `STATE_FOLLOW_LINE` | 1 | Bang-bang line following; detects intersections and left-path shortcuts |
+| `STATE_FOLLOW_LINE` | 1 | Bang-bang line following; detects intersections, corners, and left-path shortcuts |
 | `STATE_VERIFY_TARGET` | 2 | Validates whether wide pattern is target (persistent + distance) |
-| `STATE_PREPARE_TURN` | 1 | Push pose onto stack, drive forward into intersection |
-| `STATE_TURN_LEFT` | 1 | Non-blocking 90° left turn (+π/2 rad) |
-| `STATE_AT_TARGET` | 2 | Target confirmed; record pose; initiate return |
-| `STATE_RETURN_TURN` | 3 | Turn toward parent node on the stack |
-| `STATE_RETURN_FOLLOW` | 3 | Follow line to parent pose until within tolerance |
+| `STATE_AT_TARGET` | 2 | Target confirmed; record pose; continue exploration or start return |
+| `STATE_APPROACH_CENTER` | 1 | Drive forward into intersection; create/merge graph node and link edge |
+| `STATE_CHOOSE_NEXT` | 1 | Select next unexplored edge using left-hand rule; fall back to backtracking |
+| `STATE_TURN_TO_EDGE` | 1 | Non-blocking turn toward chosen edge direction |
+| `STATE_RETURN_TURN` | 3 | Turn toward next node on Dijkstra return path |
+| `STATE_RETURN_FOLLOW` | 3 | Follow line to next node on return path |
+| `STATE_RETURN_AT_NODE` | 3 | Arrived at node; advance path index or switch return leg |
 | `STATE_DONE` | — | Mission complete; motors off; wait for restart |
 
 **State Transitions**:
@@ -93,21 +99,24 @@ Build artifacts are placed in `build/`:
 |---|------|----|-----------|
 | 1 | `IDLE` | `FOLLOW_LINE` | `startButton()` pressed |
 | 2 | `FOLLOW_LINE` | `VERIFY_TARGET` | `ground == SENSOR_ALL` (intersection or target candidate) |
-| 3 | `FOLLOW_LINE` | `PREPARE_TURN` | `(ground & SENSOR_LEFT) == SENSOR_LEFT` (path to left, skip verification) |
-| 4 | `FOLLOW_LINE` | `DONE` | Lost line for ≥ `LOST_TICKS` (25 ticks ≈ 1 s) |
-| 5 | `VERIFY_TARGET` | `AT_TARGET` | `ground == SENSOR_ALL` persists AND `dist >= TARGET_DIST_THRESHOLD` (6) |
-| 6 | `VERIFY_TARGET` | `PREPARE_TURN` | `ground != SENSOR_ALL` before threshold (normal intersection) |
-| 7 | `PREPARE_TURN` | `DONE` | `nav_push()` fails (stack overflow) |
-| 8 | `PREPARE_TURN` | `TURN_LEFT` | `distIntoIntersection > INTERSECTION_CENTER_DIST` (150) |
-| 9 | `TURN_LEFT` | `FOLLOW_LINE` | `rotation_done()` (90° left turn complete) |
-| 10 | `AT_TARGET` | `DONE` | `nav_isEmpty()` (target was at start) |
-| 11 | `AT_TARGET` | `RETURN_TURN` | Pop parent pose from stack, turn toward it |
-| 12 | `RETURN_TURN` | `RETURN_FOLLOW` | `rotation_done()` (facing parent node) |
-| 13 | `RETURN_FOLLOW` | `RETURN_TURN` | `dist < ORIGIN_TOLERANCE` (0.05 m) AND stack not empty (next parent) |
-| 14 | `RETURN_FOLLOW` | `DONE` | `dist < ORIGIN_TOLERANCE` AND `nav_isEmpty()` (back at start, success) |
-| 15 | `RETURN_FOLLOW` | `DONE` | Lost line for ≥ `LOST_TICKS` (reason: `LOST_RETURN`) |
-| 16 | `DONE` | `FOLLOW_LINE` | `startButton()` pressed (restart mission) |
-| 17 | *Any* | `IDLE` | `stopButton()` pressed (emergency stop) |
+| 3 | `FOLLOW_LINE` | `APPROACH_CENTER` | `(ground & SENSOR_LEFT) == SENSOR_LEFT` (path to left, skip verification) |
+| 4 | `FOLLOW_LINE` | `APPROACH_CENTER` | Left corner or right corner detected for `CORNER_TICKS` consecutive ticks |
+| 5 | `FOLLOW_LINE` | `APPROACH_CENTER` | Lost line for ≥ `LOST_TICKS` (deadend) |
+| 6 | `VERIFY_TARGET` | `AT_TARGET` | `ground == SENSOR_ALL` persists AND `dist >= TARGET_DIST_THRESHOLD` |
+| 7 | `VERIFY_TARGET` | `APPROACH_CENTER` | `ground != SENSOR_ALL` before threshold (normal intersection) |
+| 8 | `AT_TARGET` | `CHOOSE_NEXT` | Continue exploring after recording target |
+| 9 | `APPROACH_CENTER` | `DONE` | `navGraph_addNode()` fails (graph full) |
+| 10 | `APPROACH_CENTER` | `CHOOSE_NEXT` | Reached center; node created/merged and edge linked |
+| 11 | `CHOOSE_NEXT` | `TURN_TO_EDGE` | Unexplored edge chosen (left / straight / right / back) |
+| 12 | `CHOOSE_NEXT` | `RETURN_TURN` | All edges explored and back at origin; start Dijkstra return |
+| 13 | `TURN_TO_EDGE` | `FOLLOW_LINE` | `rotation_done()` (turn complete) |
+| 14 | `RETURN_TURN` | `RETURN_FOLLOW` | `rotation_done()` (facing next node) |
+| 15 | `RETURN_FOLLOW` | `RETURN_AT_NODE` | `dist < ORIGIN_TOLERANCE` (reached next node) |
+| 16 | `RETURN_AT_NODE` | `RETURN_TURN` | More nodes on current return leg |
+| 17 | `RETURN_AT_NODE` | `RETURN_TURN` | Finished leg 1 (origin→target); start leg 2 (target→origin) |
+| 18 | `RETURN_AT_NODE` | `DONE` | Finished leg 2 (target→origin); mission complete |
+| 19 | `DONE` | `FOLLOW_LINE` | `startButton()` pressed (restart mission) |
+| 20 | *Any* | `IDLE` | `stopButton()` pressed (emergency stop) |
 
 **Mermaid State Diagram**:
 
@@ -116,19 +125,22 @@ stateDiagram-v2
     [*] --> IDLE
     IDLE --> FOLLOW_LINE : startButton()
     FOLLOW_LINE --> VERIFY_TARGET : ground == SENSOR_ALL
-    FOLLOW_LINE --> PREPARE_TURN : (ground & SENSOR_LEFT) == SENSOR_LEFT
-    FOLLOW_LINE --> DONE : lost >= LOST_TICKS
-    VERIFY_TARGET --> AT_TARGET : ground == SENSOR_ALL<br/>AND dist >= 6
-    VERIFY_TARGET --> PREPARE_TURN : ground != SENSOR_ALL
-    PREPARE_TURN --> DONE : nav_push() fails
-    PREPARE_TURN --> TURN_LEFT : dist > 150
-    TURN_LEFT --> FOLLOW_LINE : rotation_done()
-    AT_TARGET --> DONE : nav_isEmpty()
-    AT_TARGET --> RETURN_TURN : pop parent
+    FOLLOW_LINE --> APPROACH_CENTER : (ground & SENSOR_LEFT) == SENSOR_LEFT
+    FOLLOW_LINE --> APPROACH_CENTER : corner detected
+    FOLLOW_LINE --> APPROACH_CENTER : lost >= LOST_TICKS (deadend)
+    VERIFY_TARGET --> AT_TARGET : ground == SENSOR_ALL<br/>AND dist >= TARGET_DIST_THRESHOLD
+    VERIFY_TARGET --> APPROACH_CENTER : ground != SENSOR_ALL
+    AT_TARGET --> CHOOSE_NEXT : CONTINUE_EXPLORE
+    APPROACH_CENTER --> CHOOSE_NEXT : reached center
+    APPROACH_CENTER --> DONE : GRAPH_FULL
+    CHOOSE_NEXT --> TURN_TO_EDGE : unexplored edge
+    CHOOSE_NEXT --> RETURN_TURN : all explored<br/>AND at origin
+    TURN_TO_EDGE --> FOLLOW_LINE : rotation_done()
     RETURN_TURN --> RETURN_FOLLOW : rotation_done()
-    RETURN_FOLLOW --> RETURN_TURN : dist < 0.05<br/>AND !empty
-    RETURN_FOLLOW --> DONE : dist < 0.05<br/>AND empty
-    RETURN_FOLLOW --> DONE : lost >= 25
+    RETURN_FOLLOW --> RETURN_AT_NODE : dist < ORIGIN_TOLERANCE
+    RETURN_AT_NODE --> RETURN_TURN : next node on leg
+    RETURN_AT_NODE --> RETURN_TURN : LEG2_START
+    RETURN_AT_NODE --> DONE : mission complete
     DONE --> FOLLOW_LINE : startButton()
     DONE --> [*]
 
@@ -141,15 +153,15 @@ stateDiagram-v2
 **ASCII Fallback Diagram**:
 
 ```
-                              +------------------+
-                              |   STATE_IDLE     |
-                              | (wait for start) |
-                              +--------+---------+
-                                       | startButton()
-                                       v
+                               +------------------+
+                               |   STATE_IDLE     |
+                               | (wait for start) |
+                               +--------+---------+
+                                        | startButton()
+                                        v
 +-------------------+        +------------------+
-|  STATE_TURN_LEFT  |<-------| STATE_FOLLOW_LINE|<-----------+
-| (rotate +90 deg)  |        | (bang-bang follow)|            |
+| STATE_TURN_TO_EDGE|<-------| STATE_FOLLOW_LINE|<-----------+
+| (turn to edge)    |        | (bang-bang follow)|            |
 +--------+----------+        +--------+---------+            |
          | rotation_done()            |                      |
          v                            | SENSOR_ALL            |
@@ -160,36 +172,38 @@ stateDiagram-v2
                                       | pattern breaks        |
                     target confirmed  v                     |
                     +------------------+        +------------------+
-                    |  STATE_AT_TARGET |        | STATE_PREPARE_TURN|
-                    | (record, return) |        | (push, drive 150) |
+                    |  STATE_AT_TARGET |        |STATE_APPROACH_CENTER|
+                    | (record, continue)|       | (drive, node+edge) |
                     +--------+---------+        +--------+---------+
-                             | nav_isEmpty()            | dist > 150
+                             |                          | reached center
                              v                          v
                     +------------------+        +------------------+
-                    |    STATE_DONE    |        |  STATE_TURN_LEFT |
-                    | (mission complete)|       +--------+---------+
-                    +--------+---------+                 |
-                             ^                           |
+                    | STATE_CHOOSE_NEXT |       | STATE_CHOOSE_NEXT |
+                    | (pick next edge)  |       | (pick next edge)  |
+                    +--------+---------+        +--------+---------+
+                             | unexplored                | all explored
+                             v                           v
+                    +------------------+        +------------------+
+                    | STATE_TURN_TO_EDGE|       | STATE_RETURN_TURN |
+                    +--------+---------+        +--------+---------+
                              |                           |
-         +-------------------+-------------------+       |
-         |                                       |       |
-         v                                       v       |
-+-------------------+                    +------------------+
-| STATE_RETURN_TURN |<-------------------|STATE_RETURN_FOLLOW|
-| (turn to parent)  |  reached parent    | (follow to parent)|
-+--------+----------+  & stack not empty +--------+---------+
-         | rotation_done()                          |
-         v                                          |
-+-------------------+                               |
-|STATE_RETURN_FOLLOW|                               |
-| (follow to parent)|                               |
-+--------+----------+                               |
-         | reached parent & empty                   |
-         v                                          |
-+-------------------+                               |
-|    STATE_DONE     |<------------------------------+
-| (mission complete)|
-+-------------------+
+                             v                           v
+                    +------------------+        +------------------+
+                    | STATE_FOLLOW_LINE |       |STATE_RETURN_FOLLOW|
+                    +-------------------+       +--------+---------+
+                                                         |
+                                                         v
+                                                +------------------+
+                                                |STATE_RETURN_AT_NODE|
+                                                +--------+---------+
+                                                         |
+                                    +--------------------+--------------------+
+                                    |                                         |
+                                    v                                         v
+                           +------------------+                      +------------------+
+                           | STATE_RETURN_TURN |                      |    STATE_DONE    |
+                           | (next node/leg2)  |                      | (mission complete)|
+                           +-------------------+                      +------------------+
 ```
 
 ## Control Loop Discipline
@@ -222,7 +236,9 @@ The 5-bit ground IR sensor array returns patterns from `readLineSensors(0)` (bit
 | `SENSOR_RIGHT` | `0b00011` | Line on right side → drift left |
 | `SENSOR_ALL` | `0b11111` | Wide black area (intersection or target) |
 
-**Target vs. Intersection**: The target is confirmed only if `SENSOR_ALL` persists while the robot travels at least `TARGET_DIST_THRESHOLD` (6 units). If the pattern breaks before that distance, it was a normal intersection.
+**Target vs. Intersection**: The target is confirmed only if `SENSOR_ALL` persists while the robot travels at least `TARGET_DIST_THRESHOLD` (0.06 m). If the pattern breaks before that distance, it was a normal intersection.
+
+**Corner Detection**: Left and right corners are detected when `SENSOR_LEFT` or `SENSOR_RIGHT` persists for `CORNER_TICKS` consecutive ticks (3 ticks ≈ 120 ms).
 
 ## LED Indicators
 
@@ -230,11 +246,31 @@ The 4 on-board LEDs indicate the current mission phase:
 
 | LED | State(s) | Meaning |
 |-----|----------|---------|
-| LED 0 | `IDLE`, `FOLLOW_LINE`, `VERIFY_TARGET`, `PREPARE_TURN`, `TURN_LEFT` | Phase 1: Exploring |
+| LED 0 | `IDLE`, `FOLLOW_LINE`, `VERIFY_TARGET`, `APPROACH_CENTER`, `CHOOSE_NEXT`, `TURN_TO_EDGE` | Phase 1: Exploring |
 | LED 1 | `AT_TARGET` | Phase 2: At target |
-| LED 2 | `RETURN_TURN`, `RETURN_FOLLOW` | Phase 3: Returning |
+| LED 2 | `RETURN_TURN`, `RETURN_FOLLOW`, `RETURN_AT_NODE` | Phase 3: Returning |
 | LED 3 (solid) | `DONE` + success | Mission complete |
-| LED 3 (fast blink) | `DONE` + error | Mission failed (lost, stack overflow, etc.) |
+| LED 3 (fast blink) | `DONE` + error | Mission failed (lost, graph full, etc.) |
+
+## Navigation Graph
+
+The robot builds a graph during exploration:
+- **Nodes**: Intersections, corners, deadends, and the target
+- **Edges**: Line segments between nodes, with distance weights
+- **Exploration**: Left-hand rule with backtracking when no unexplored edges remain
+- **Return**: Dijkstra shortest-path algorithm computes the optimal route from origin to target (leg 1) and target back to origin (leg 2)
+
+Graph data structures are statically allocated (`MAX_NODES = 32`, `MAX_EDGES = 64`).
+
+## Unit Tests
+
+Host-runnable tests for the navigation graph logic are in `tests/`:
+
+```bash
+cd tests && make
+```
+
+Tests cover node creation/merging, edge linking, Dijkstra pathfinding, target flagging, and edge exploration tracking. The tests use a mock `rm-mr32.h` to compile on the host without PIC32 dependencies.
 
 ## References
 

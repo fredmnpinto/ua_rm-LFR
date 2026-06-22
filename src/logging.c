@@ -36,6 +36,41 @@ void log_groundDetection(unsigned int tick, const char *type, unsigned int groun
 }
 
 void log_missionDone(unsigned int tick, double tx, double ty, double th, int depth, unsigned int ticks) {
-    printf("[T %u] DONE target=(%.2f,%.2f,%.2f) depth=%d ticks=%d\n",
+    printf("[T %u] DONE target=(%.2f,%.2f,%.2f) depth=%d ticks=%u\n",
            tick, tx, ty, th, depth, ticks);
+}
+
+/* Graph event logging */
+void log_nodeAdd(unsigned int tick, unsigned char nodeId, double x, double y, const char *type) {
+    printf("[T %u] NODE_ADD id=%u x=%.3f y=%.3f type=%s\n", tick, nodeId, x, y, type);
+}
+
+void log_edgeAdd(unsigned int tick, unsigned char edgeId, unsigned char nodeA, unsigned char nodeB, float distance) {
+    printf("[T %u] EDGE_ADD id=%u A=%u B=%u dist=%.3f\n", tick, edgeId, nodeA, nodeB, distance);
+}
+
+void log_edgeExplored(unsigned int tick, unsigned char edgeId) {
+    printf("[T %u] EDGE_EXPLORED id=%u\n", tick, edgeId);
+}
+
+void log_cornerDetect(unsigned int tick, const char *type, unsigned int ground) {
+    printf("[T %u] CORNER %s ground=", tick, type);
+    printInt(ground, 2 | 5 << 16);
+    printf("\n");
+}
+
+void log_dijkstraPath(unsigned int tick, const unsigned char *path, unsigned char pathLen) {
+    unsigned char i;
+    printf("[T %u] DIJKSTRA path=", tick);
+    for (i = 0; i < pathLen; i++) {
+        printf("%u", path[i]);
+        if (i + 1 < pathLen) {
+            printf(",");
+        }
+    }
+    printf(" len=%u\n", pathLen);
+}
+
+void log_explorationDone(unsigned int tick, unsigned char nodeCount, unsigned char edgeCount) {
+    printf("[T %u] EXPLORE_DONE nodes=%u edges=%u\n", tick, nodeCount, edgeCount);
 }

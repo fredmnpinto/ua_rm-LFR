@@ -5,14 +5,18 @@
  *   COMPILE-TIME CONSTANTS
  * ======================================================================== */
 
-#define MAX_STACK_DEPTH 32
-#define TARGET_DIST_THRESHOLD 6
+#define MAX_NODES 32
+#define MAX_EDGES 64
+#define NODE_MERGE_TOLERANCE 0.10f
+#define CORNER_TICKS 3
+#define MAX_PATH_LENGTH 32
+#define TARGET_DIST_THRESHOLD 0.06f
 #define BASE_SPEED 40
 #define TURN_SPEED 20
 #define RECOVERY_SPEED 40
 #define LOST_TICKS 25
-#define ORIGIN_TOLERANCE 0.05
-#define INTERSECTION_CENTER_DIST 150
+#define ORIGIN_TOLERANCE 0.05f
+#define INTERSECTION_CENTER_DIST 0.15f
 
 #define KP_ROT 40.0
 #define KI_ROT 5.0

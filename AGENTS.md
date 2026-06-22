@@ -1,21 +1,25 @@
 # TP2: Path Finder Robot (PIC32)
 
-Embedded C agent for a differential-drive PIC32 robot. Follows black lines, turns left at intersections, detects a wide target line, and returns to start via parent-pointer DFS.
+Embedded C agent for a differential-drive PIC32 robot. Follows black lines, turns left at intersections, detects a wide target line, and returns to start via Dijkstra shortest-path on a navigation graph.
 
 ## Project Structure
 
 ```
 src/
 ├── robot-agent.c      # Main loop: init, 40 ms tick, sensor read, stateMachine_tick()
-├── state_machine.c/h  # Core state machine (9 states: IDLE → FOLLOW_LINE → VERIFY_TARGET/PREPARE_TURN → TURN_LEFT → AT_TARGET → RETURN_TURN → RETURN_FOLLOW → DONE)
+├── state_machine.c/h  # Core state machine (11 states: IDLE → FOLLOW_LINE → VERIFY_TARGET → AT_TARGET → APPROACH_CENTER → CHOOSE_NEXT → TURN_TO_EDGE → RETURN_TURN → RETURN_FOLLOW → RETURN_AT_NODE → DONE)
 ├── line_follower.c/h  # Bang-bang line following (not PID)
 ├── rotation.c/h       # PI heading controller for in-place turns
-├── nav_stack.c/h      # Static pose stack for parent-pointer DFS return
+├── nav_graph.c/h      # Static navigation graph: nodes, edges, Dijkstra shortest path
 ├── leds.c/h           # Phase indication via 4 on-board LEDs
 ├── logging.c/h        # printf-based state transition logging
 ├── config.h           # Compile-time constants (speeds, thresholds, sensor bitmasks)
 ├── rm-mr32.c/h        # DETI hardware library (READ-ONLY)
 └── pcompile           # Wrapper script with HARDCODED Nix store path
+tests/
+├── test_nav_graph.c   # Host-runnable unit tests for nav_graph logic
+├── rm-mr32.h          # Mock hardware header for host compilation
+└── Makefile           # Test build runner
 ```
 
 ## Dev Environment
@@ -71,7 +75,7 @@ while (1) {
 - **Never** use `delay()`, `wait()`, or busy-waiting for timing.
 - **Avoid** calling `printf` on every 40 ms tick — it is slow and can destabilize the control loop. `logging.c` demonstrates the right pattern: print only on state transitions (infrequent events). For sensor debugging, throttle prints (e.g., every N ticks or only when values change significantly).
 - **No floating-point in ISRs**: PIC32 FPU is slow; keep `double` math in the main loop.
-- **No dynamic allocation**: No `malloc`/`free`. All structures are static (see `nav_stack.c`).
+- **No dynamic allocation**: No `malloc`/`free`. All structures are static (see `nav_graph.c`).
 
 ## Architecture Notes
 
@@ -79,13 +83,15 @@ while (1) {
 `state_machine.c` implements a table-driven state machine. States have optional `onEnter`/`onTick`/`onExit` handlers. The `changeState()` helper logs transitions and updates the `Phase` enum for LED mapping.
 
 Key states:
-- **FOLLOW_LINE**: Calls `lineFollower_centerOnLine()`. On `SENSOR_ALL`, transitions to `VERIFY_TARGET`. On left-path detection (`ground & SENSOR_LEFT`), skips verification and goes to `PREPARE_TURN`.
-- **VERIFY_TARGET**: Drives straight while `SENSOR_ALL` persists. If traveled distance ≥ `TARGET_DIST_THRESHOLD`, it's the target → `AT_TARGET`. Otherwise it was just an intersection → `PREPARE_TURN`.
-- **PREPARE_TURN**: Drives forward `INTERSECTION_CENTER_DIST` mm into the intersection, then pushes current pose onto `nav_stack` and transitions to `TURN_LEFT`.
-- **TURN_LEFT**: Uses `rotation.c` PI controller to rotate +90°.
-- **AT_TARGET**: Records target pose, then pops the stack and transitions to `RETURN_TURN`.
-- **RETURN_TURN**: Computes bearing to parent node, uses `rotation.c` to turn toward it.
-- **RETURN_FOLLOW**: Follows line while checking odometry distance to parent node. When within `ORIGIN_TOLERANCE`, pops next parent or finishes.
+- **FOLLOW_LINE**: Calls `lineFollower_centerOnLine()`. On `SENSOR_ALL`, transitions to `VERIFY_TARGET`. On left-path detection (`ground & SENSOR_LEFT`), skips verification and goes to `APPROACH_CENTER`. Also detects left/right corners and deadends.
+- **VERIFY_TARGET**: Drives straight while `SENSOR_ALL` persists. If traveled distance ≥ `TARGET_DIST_THRESHOLD`, it's the target → `AT_TARGET`. Otherwise it was just an intersection → `APPROACH_CENTER`.
+- **AT_TARGET**: Records target pose, sets target flag on graph node, then transitions to `CHOOSE_NEXT` to continue exploration.
+- **APPROACH_CENTER**: Drives forward `INTERSECTION_CENTER_DIST` into the intersection, then creates/merges a graph node and links an edge to the previous node.
+- **CHOOSE_NEXT**: Checks all edges of the current node for unexplored status regardless of node type. Uses left-hand rule (left, straight, right, back) to choose the next direction. If all edges are explored and at origin, starts Dijkstra return navigation.
+- **TURN_TO_EDGE**: Uses `rotation.c` PI controller to turn toward the chosen edge direction.
+- **RETURN_TURN**: Computes bearing to next node on the Dijkstra path, uses `rotation.c` to turn toward it.
+- **RETURN_FOLLOW**: Follows line while checking odometry distance to next node. When within `ORIGIN_TOLERANCE`, transitions to `RETURN_AT_NODE`.
+- **RETURN_AT_NODE**: Advances the path index. If at the end of leg 1 (origin→target), computes Dijkstra path for leg 2 (target→origin). If at the end of leg 2, mission is complete.
 
 ### Line Follower
 Bang-bang (not PID). `lineFollower_centerOnLine()` sets motor speeds based on discrete sensor bit patterns. Returns `*pLost = true` when `ground == SENSOR_NONE` so the state machine can handle recovery (spin search, then timeout).
@@ -93,8 +99,13 @@ Bang-bang (not PID). `lineFollower_centerOnLine()` sets motor speeds based on di
 ### Rotation Controller
 `rotation.c` uses a PI controller (`KP_ROT`, `KI_ROT` from `config.h`) to rotate in place. `rotation_start()` sets target angle; `rotation_tick()` computes error via `normalizeAngle()` and calls `setVel2(-cmdVel, cmdVel)`.
 
-### Navigation Stack
-`nav_stack.c` is a static array stack (`MAX_STACK_DEPTH = 32`). During exploration, each intersection pose is `nav_push()`ed. During return, poses are `nav_pop()`ed to follow parent pointers back to start. This is Strategy A (parent-pointer DFS) from the assignment.
+### Navigation Graph
+`nav_graph.c` maintains a static graph of nodes and edges (`MAX_NODES = 32`, `MAX_EDGES = 64`). During exploration, each intersection/corner/deadend becomes a node, and line segments become weighted edges. During return, `navGraph_dijkstra()` computes the shortest path between any two nodes. The return mission consists of two legs: origin→target, then target→origin.
+
+### Corner and Deadend Detection
+- **Left corner**: `SENSOR_LEFT` persists for `CORNER_TICKS` consecutive ticks.
+- **Right corner**: `SENSOR_RIGHT` persists for `CORNER_TICKS` consecutive ticks.
+- **Deadend**: Line lost for `LOST_TICKS` consecutive ticks (spin search timeout).
 
 ## Hardware API (rm-mr32.h)
 
@@ -135,6 +146,16 @@ make ROBOT=5
 ```
 
 Supported IDs: 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12.
+
+## Unit Tests
+
+Host-runnable tests for pure logic (no hardware dependencies) are in `tests/`:
+
+```bash
+cd tests && make
+```
+
+Tests cover nav_graph node creation, merging, edge linking, Dijkstra pathfinding, target flagging, and edge exploration. The mock `tests/rm-mr32.h` shadows the real hardware header during host compilation.
 
 ## Boundaries
 

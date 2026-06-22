@@ -1,6 +1,7 @@
 #include "rm-mr32.h"
 #include "state_machine.h"
 #include "leds.h"
+#include "nav_graph.h"
 
 int main(void) {
     initPIC32();
@@ -8,6 +9,7 @@ int main(void) {
     setVel2(0, 0);
     setRobotPos(0.0, 0.0, 0.0);
 
+    navGraph_init();
     stateMachine_init();
 
     while (!startButton()) {

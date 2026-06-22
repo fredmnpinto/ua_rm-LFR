@@ -15,8 +15,14 @@ void leds_update(Phase phase, unsigned int tick) {
             led(1, 1);
             break;
 
+        case PHASE_RETURNING_TO_TARGET:
+            /* Phase 2: returning to target */
+            led(0, 1);
+            led(1, 1);
+            break;
+
         case PHASE_RETURNING:
-            /* Phase 3: returning */
+            /* Phase 3: returning to origin */
             led(2, 1);
             break;
 
