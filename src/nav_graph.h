@@ -9,10 +9,10 @@
  * ======================================================================== */
 
 typedef enum {
-    NODE_TYPE_INTERSECTION,
-    NODE_TYPE_LEFT_CORNER,
-    NODE_TYPE_RIGHT_CORNER,
-    NODE_TYPE_DEADEND
+  NODE_TYPE_INTERSECTION,
+  NODE_TYPE_LEFT_CORNER,
+  NODE_TYPE_RIGHT_CORNER,
+  NODE_TYPE_DEADEND
 } NodeType;
 
 /* ========================================================================
@@ -20,25 +20,25 @@ typedef enum {
  * ======================================================================== */
 
 #define NODE_FLAG_IS_TARGET 0x01
-#define EDGE_FLAG_EXPLORED  0x01
+#define EDGE_FLAG_EXPLORED 0x01
 
 /* ========================================================================
  *   DATA STRUCTURES
  * ======================================================================== */
 
 typedef struct {
-    Pose pose;
-    unsigned char edges[4];
-    unsigned char edgeCount;
-    unsigned char flags;
-    NodeType type;
+  Pose pose;
+  unsigned char edges[4];
+  unsigned char edgeCount;
+  unsigned char flags;
+  NodeType type;
 } GraphNode;
 
 typedef struct {
-    float distance;
-    unsigned char nodeA;
-    unsigned char nodeB;
-    unsigned char flags;
+  float distance;
+  unsigned char nodeA;
+  unsigned char nodeB;
+  unsigned char flags;
 } Edge;
 
 /* ========================================================================
@@ -62,7 +62,8 @@ void navGraph_reset(void);
  * @param outNodeId Output: ID assigned to the new node.
  * @return true if the node was added, false if the graph is full.
  */
-bool navGraph_addNode(const Pose *pose, NodeType type, unsigned char *outNodeId);
+bool navGraph_addNode(const Pose *pose, NodeType type,
+                      unsigned char *outNodeId);
 
 /**
  * Find an existing node near the given pose.
@@ -80,7 +81,8 @@ char navGraph_findNodeAt(const Pose *pose, float tolerance);
  * @param outEdgeId  Output: ID assigned to the new edge.
  * @return true if the edge was added or already exists, false on error.
  */
-bool navGraph_addEdge(unsigned char nodeA, unsigned char nodeB, float distance, unsigned char *outEdgeId);
+bool navGraph_addEdge(unsigned char nodeA, unsigned char nodeB, float distance,
+                      unsigned char *outEdgeId);
 
 /**
  * Find an existing edge between two nodes.
@@ -159,7 +161,8 @@ void navGraph_setNodeTarget(unsigned char nodeId);
  * @param outPathLen  Output: length of the path.
  * @return true if a path was found, false otherwise.
  */
-bool navGraph_dijkstra(unsigned char fromNode, unsigned char toNode, unsigned char *outPath, unsigned char *outPathLen);
+bool navGraph_dijkstra(unsigned char fromNode, unsigned char toNode,
+                       unsigned char *outPath, unsigned char *outPathLen);
 
 /**
  * Get a pointer to a node by ID.
@@ -176,6 +179,7 @@ const GraphNode *navGraph_getNode(unsigned char nodeId);
  * @param tolerance      Angular tolerance (radians).
  * @return Edge ID if found, -1 otherwise.
  */
-char navGraph_getEdgeInDirection(unsigned char nodeId, double currentHeading, double desiredDelta, double tolerance);
+char navGraph_getEdgeInDirection(unsigned char nodeId, double currentHeading,
+                                 double desiredDelta, double tolerance);
 
 #endif /* NAV_GRAPH_H */

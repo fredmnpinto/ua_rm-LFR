@@ -1,4 +1,5 @@
 #include "state_machine.h"
+#include "config.h"
 #include "line_follower.h"
 #include "logging.h"
 #include "nav_graph.h"
@@ -25,6 +26,7 @@ static void stateFollowLine_onTick(void);
 static void stateVerifyTarget_onEnter(void);
 static void stateVerifyTarget_onTick(void);
 static void stateAtTarget_onTick(void);
+static void stateAtTarget_onEnter(void);
 static void stateApproachCenter_onEnter(void);
 static void stateApproachCenter_onTick(void);
 static void stateChooseNext_onTick(void);
@@ -47,7 +49,7 @@ static State s_stateFollowLine = {NULL, stateFollowLine_onTick, NULL,
                                   "FOLLOW_LINE"};
 static State s_stateVerifyTarget = {
     stateVerifyTarget_onEnter, stateVerifyTarget_onTick, NULL, "VERIFY_TARGET"};
-static State s_stateAtTarget = {NULL, stateAtTarget_onTick, NULL, "AT_TARGET"};
+static State s_stateAtTarget = {stateAtTarget_onEnter, NULL, NULL, "AT_TARGET"};
 static State s_stateApproachCenter = {stateApproachCenter_onEnter,
                                       stateApproachCenter_onTick, NULL,
                                       "APPROACH_CENTER"};
@@ -205,11 +207,11 @@ static void stateFollowLine_onTick(void) {
 
   if (lost) {
     s_lostTickCount++;
+    printf("DEBUG --- Lost!!! [%d]\n", s_lostTickCount);
     s_leftCornerTicks = 0;
     s_rightCornerTicks = 0;
     if (s_lostTickCount < LOST_TICKS) {
-      /* Spin search: rotate in place */
-      setVel2(-RECOVERY_SPEED, RECOVERY_SPEED);
+      // Wait
     } else {
       /* Timeout — deadend */
       setVel2(0, 0);
@@ -218,6 +220,8 @@ static void stateFollowLine_onTick(void) {
       changeState(&s_stateApproachCenter, "DEADEND");
     }
     return;
+  } else {
+    s_lostTickCount = 0; // Reset lost counter
   }
 
   /* Line reacquired */
@@ -292,7 +296,7 @@ static void stateVerifyTarget_onTick(void) {
 /* -------------------------------------------------- */
 /* STATE_AT_TARGET                                    */
 /* -------------------------------------------------- */
-static void stateAtTarget_onTick(void) {
+static void stateAtTarget_onEnter(void) {
   setVel2(0, 0);
   getRobotPos(&s_targetX, &s_targetY, &s_targetH);
   log_target(s_tick, s_targetX, s_targetY, s_targetH);
@@ -301,7 +305,13 @@ static void stateAtTarget_onTick(void) {
   unsigned char currentNode = navGraph_getCurrentNode();
   navGraph_setTargetNode(currentNode);
   navGraph_setNodeTarget(currentNode);
-  changeState(&s_stateChooseNext, "CONTINUE_EXPLORE");
+
+  /* Check if exploration is complete */
+  log_explorationDone(s_tick, navGraph_getNodeCount(), navGraph_getEdgeCount());
+  startReturnNavigation();
+
+  // s_detectedNodeType = NODE_TYPE_DEADEND;
+  // changeState(&s_stateApproachCenter, "DEADEND");
 }
 
 /* -------------------------------------------------- */
@@ -352,7 +362,8 @@ static void stateApproachCenter_onTick(void) {
     if (s_prevNodeId != currentNode) {
       const GraphNode *prevNode = navGraph_getNode(s_prevNodeId);
       if (prevNode) {
-        double edgeDist = hypot(x - prevNode->pose.x, y - prevNode->pose.y);
+        double edgeDist =
+            sqrt(pow(x - prevNode->pose.x, 2) + pow(y - prevNode->pose.y, 2));
         unsigned char edgeId = 0xFF;
         bool edgeCreated = navGraph_addEdge(s_prevNodeId, currentNode,
                                             (float)edgeDist, &edgeId);
@@ -376,15 +387,6 @@ static void stateApproachCenter_onTick(void) {
 static void stateChooseNext_onTick(void) {
   unsigned char currentNode = navGraph_getCurrentNode();
 
-  /* Check if exploration is complete */
-  if (currentNode == 0 && navGraph_allEdgesExplored() &&
-      navGraph_getTargetNode() != 0xFF) {
-    log_explorationDone(s_tick, navGraph_getNodeCount(),
-                        navGraph_getEdgeCount());
-    startReturnNavigation();
-    return;
-  }
-
   const GraphNode *node = navGraph_getNode(currentNode);
   if (!node) {
     s_doneReason = "INVALID_NODE";
@@ -392,24 +394,33 @@ static void stateChooseNext_onTick(void) {
     return;
   }
 
+  printf("Line sensor: ");
+  printInt(s_ground, 2 | 5 << 16); // System call
+  printf("\n");
+
   /* Determine available directions using node type as a hint */
   bool hasLeft = false, hasStraight = false, hasRight = false;
-  switch (node->type) {
+  switch (s_detectedNodeType) {
   case NODE_TYPE_INTERSECTION:
     hasLeft = true;
-    hasStraight = true;
     hasRight = true;
+    printf("DEBUG --- It's an intersection\n");
     break;
   case NODE_TYPE_LEFT_CORNER:
     hasLeft = true;
-    hasStraight = true;
+    printf("DEBUG --- It's a left corner\n");
     break;
   case NODE_TYPE_RIGHT_CORNER:
     hasRight = true;
-    hasStraight = true;
+    printf("DEBUG --- It's a right corner\n");
     break;
   case NODE_TYPE_DEADEND:
+    printf("DEBUG --- it's a deadend\n");
     break;
+  }
+
+  if (s_detectedNodeType != NODE_TYPE_DEADEND && s_ground != SENSOR_NONE) {
+    hasStraight = true;
   }
 
   /* Check ALL edges of current node for unexplored status regardless of node
@@ -424,11 +435,14 @@ static void stateChooseNext_onTick(void) {
                                        tolerance);
   if (edgeId < 0) {
     if (hasLeft) {
+      printf("DEBUG --- Somehow has left\n");
       s_chosenDeltaAngle = PI / 2.0;
       changeState(&s_stateTurnToEdge, "LEFT");
       return;
     }
-  } else if (!navGraph_isEdgeExplored((unsigned char)edgeId)) {
+  } else if (!navGraph_isEdgeExplored((unsigned char)edgeId) ||
+             (!hasRight && !hasStraight)) {
+    printf("DEBUG --- Unexplored(?) left\n");
     s_chosenDeltaAngle = PI / 2.0;
     changeState(&s_stateTurnToEdge, "LEFT");
     return;
@@ -443,7 +457,7 @@ static void stateChooseNext_onTick(void) {
       changeState(&s_stateTurnToEdge, "STRAIGHT");
       return;
     }
-  } else if (!navGraph_isEdgeExplored((unsigned char)edgeId)) {
+  } else {
     s_chosenDeltaAngle = 0.0;
     changeState(&s_stateTurnToEdge, "STRAIGHT");
     return;
@@ -458,7 +472,7 @@ static void stateChooseNext_onTick(void) {
       changeState(&s_stateTurnToEdge, "RIGHT");
       return;
     }
-  } else if (!navGraph_isEdgeExplored((unsigned char)edgeId)) {
+  } else {
     s_chosenDeltaAngle = -PI / 2.0;
     changeState(&s_stateTurnToEdge, "RIGHT");
     return;
@@ -507,9 +521,11 @@ static void stateReturnTurn_onEnter(void) {
     changeState(&s_stateDone, "RETURN_INVALID_NODE");
     return;
   }
-
-  double deltaAngle = normalizeAngle(
-      atan2(nn->pose.y - cn->pose.y, nn->pose.x - cn->pose.x) - s_robotH);
+  double tH = atan2(nn->pose.y - cn->pose.y, nn->pose.x - cn->pose.x);
+  double deltaAngle = normalizeAngle(tH - s_robotH);
+  printf("DEBUG --- return turn cH = %f, tH = %f\nnn.pose = [%f, %f]\ncn.pose "
+         "= [%f, %f]\n",
+         s_robotH, tH, nn->pose.x, nn->pose.y, cn->pose.x, cn->pose.y);
   rotation_start(s_robotH, deltaAngle);
   log_turnStart(s_tick, normalizeAngle(s_robotH + deltaAngle));
 }

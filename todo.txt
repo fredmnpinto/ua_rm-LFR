@@ -1,0 +1,5 @@
+Line follow overwritting deadend detection
+
+First thought it was a left corner. When it came back, it was actually an intersection. Should be able to update it.
+
+

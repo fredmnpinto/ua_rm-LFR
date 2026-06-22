@@ -1,5 +1,6 @@
 #include "line_follower.h"
 #include "detpic32.h"
+#include "rm-mr32.h"
 
 /**
  * \brief Execute one tick of bang-bang line following.
@@ -14,7 +15,6 @@ void lineFollower_centerOnLine(unsigned int ground, bool *pLost) {
   *pLost = false;
 
   if (ground == SENSOR_NONE) {
-    /* Lost line — signal to caller, do not set motors here */
     *pLost = true;
     return;
   }
