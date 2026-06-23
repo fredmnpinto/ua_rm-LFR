@@ -232,8 +232,8 @@ The 5-bit ground IR sensor array returns patterns from `readLineSensors(0)` (bit
 |---------|--------|---------|
 | `SENSOR_NONE` | `0b00000` | Lost line (white floor) |
 | `SENSOR_CENTER` | `0b00100` | Centered on line |
-| `SENSOR_LEFT` | `0b11000` | Line on left side → drift right |
-| `SENSOR_RIGHT` | `0b00011` | Line on right side → drift left |
+| `SENSOR_LEFT` | `0b11000` | Line on left side → drift left |
+| `SENSOR_RIGHT` | `0b00011` | Line on right side → drift right |
 | `SENSOR_ALL` | `0b11111` | Wide black area (intersection or target) |
 
 **Target vs. Intersection**: The target is confirmed only if `SENSOR_ALL` persists while the robot travels at least `TARGET_DIST_THRESHOLD` (0.06 m). If the pattern breaks before that distance, it was a normal intersection.
